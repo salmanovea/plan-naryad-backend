@@ -1,0 +1,453 @@
+from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func, and_, or_
+from typing import List, Optional
+from datetime import date, datetime
+from decimal import Decimal
+from uuid import UUID
+
+from ..database import get_session
+from ..models import plan as plan_models, housing, work, contractor, fact
+from ..schemas import plan as schemas
+from ..services.autogeneration import generate_daily_plan
+
+
+router = APIRouter(prefix="/api/v1/plan-naryad", tags=["plan-naryad"])
+
+
+@router.post("/generate", response_model=List[schemas.PlanItem])
+async def generate_plan_naryad(
+    request: schemas.PlanGenerateRequest,
+    session: AsyncSession = Depends(get_session)
+):
+    """Автогенерация план-наряда"""
+    try:
+        plan_items = await generate_daily_plan(
+            session=session,
+            housing_id=request.housing_id,
+            target_date=request.date
+        )
+        
+        # Enrich with names
+        result_items = []
+        for item in plan_items:
+            item_dict = {
+                "id": item.id,
+                "date": item.date,
+                "housing_id": item.housing_id,
+                "section_id": item.section_id,
+                "floor_id": item.floor_id,
+                "work_type_id": item.work_type_id,
+                "contractor_id": item.contractor_id,
+                "planned_volume": item.planned_volume,
+                "unit": item.unit,
+                "rs_confirmed": item.rs_confirmed,
+                "source": item.source.value if hasattr(item.source, 'value') else str(item.source),
+            }
+            # Get work type name
+            wt = await session.execute(select(work.WorkType).where(work.WorkType.id == item.work_type_id))
+            wt_obj = wt.scalar_one_or_none()
+            item_dict["work_name"] = wt_obj.name if wt_obj else None
+            
+            # Get section name
+            sec = await session.execute(select(housing.Section).where(housing.Section.id == item.section_id))
+            sec_obj = sec.scalar_one_or_none()
+            item_dict["section_name"] = sec_obj.name if sec_obj else None
+            
+            # Get floor number
+            fl = await session.execute(select(housing.Floor).where(housing.Floor.id == item.floor_id))
+            fl_obj = fl.scalar_one_or_none()
+            item_dict["floor_number"] = fl_obj.floor_number if fl_obj else None
+            
+            result_items.append(item_dict)
+        
+        return result_items
+        
+    except ValueError as e:
+        await session.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        await session.rollback()
+        raise HTTPException(status_code=500, detail=f"Generation failed: {str(e)}")
+
+
+@router.post("/manual", response_model=schemas.PlanItem)
+async def add_manual_plan_item(
+    request: dict,
+    session: AsyncSession = Depends(get_session)
+):
+    """Ручное добавление позиции в план-наряд РС"""
+    from ..models.plan import PlanSource, PlanStatus
+    import traceback
+    try:
+        wt_result = await session.execute(
+            select(work.WorkType).where(work.WorkType.id == request["work_type_id"])
+        )
+        wt_obj = wt_result.scalar_one_or_none()
+
+        from datetime import datetime
+        item = plan_models.PlanItem(
+            date=datetime.strptime(request["date"], "%Y-%m-%d").date(),
+            housing_id=request["housing_id"],
+            section_id=request.get("section_id"),
+            floor_id=request.get("floor_id"),
+            work_type_id=request["work_type_id"],
+            contractor_id=request["contractor_id"],
+            planned_volume=Decimal(str(request["planned_volume"])),
+            unit=request.get("unit") or (wt_obj.unit if wt_obj else "шт"),
+            source=PlanSource.MANUAL,
+            status=PlanStatus.DRAFT,
+        )
+        session.add(item)
+        await session.commit()
+        await session.refresh(item)
+
+        # Загружаем дополнительные данные для фронтенда
+        sec_result = await session.execute(
+            select(housing.Section).where(housing.Section.id == item.section_id)
+        )
+        sec_obj = sec_result.scalar_one_or_none()
+        fl_result = await session.execute(
+            select(housing.Floor).where(housing.Floor.id == item.floor_id)
+        )
+        fl_obj = fl_result.scalar_one_or_none()
+
+        return {
+            "id": item.id, "date": item.date, "housing_id": item.housing_id,
+            "section_id": item.section_id, "floor_id": item.floor_id,
+            "work_type_id": item.work_type_id, "contractor_id": item.contractor_id,
+            "planned_volume": item.planned_volume, "unit": item.unit,
+            "rs_confirmed": item.rs_confirmed,
+            "source": item.source.value if hasattr(item.source, 'value') else str(item.source),
+            "work_name": wt_obj.name if wt_obj else None,
+            "section_name": sec_obj.name if sec_obj else None,
+            "floor_number": fl_obj.floor_number if fl_obj else None,
+        }
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(status_code=400, detail=f"{str(e)}\n{traceback.format_exc()}")
+
+
+@router.get("/", response_model=schemas.DailyPlanResponse)
+async def get_daily_plan(
+    date: date = Query(..., description="Дата план-наряда"),
+    housing_id: str = Query(..., description="ID корпуса"),
+    session: AsyncSession = Depends(get_session)
+):
+    """Получить план-наряд на день"""
+    # Проверяем существование корпуса
+    result = await session.execute(
+        select(housing.Housing).where(housing.Housing.id == housing_id)
+    )
+    housing_obj = result.scalar_one_or_none()
+    
+    if not housing_obj:
+        raise HTTPException(status_code=404, detail="Housing not found")
+    
+    # Получаем план-наряд
+    result = await session.execute(
+        select(plan_models.PlanItem)
+        .where(plan_models.PlanItem.date == date)
+        .where(plan_models.PlanItem.housing_id == housing_id)
+        .order_by(plan_models.PlanItem.contractor_id)
+    )
+    plan_items = result.scalars().all()
+    
+    # Enrich items with names
+    enriched_items = []
+    for item in plan_items:
+        d = {
+            "id": item.id, "date": item.date, "housing_id": item.housing_id,
+            "section_id": item.section_id, "floor_id": item.floor_id,
+            "work_type_id": item.work_type_id, "contractor_id": item.contractor_id,
+            "planned_volume": item.planned_volume, "unit": item.unit,
+            "rs_confirmed": item.rs_confirmed,
+            "source": item.source.value if hasattr(item.source, 'value') else str(item.source),
+        }
+        wt = await session.execute(select(work.WorkType).where(work.WorkType.id == item.work_type_id))
+        wt_obj = wt.scalar_one_or_none()
+        d["work_name"] = wt_obj.name if wt_obj else None
+
+        sec = await session.execute(select(housing.Section).where(housing.Section.id == item.section_id))
+        sec_obj = sec.scalar_one_or_none()
+        d["section_name"] = sec_obj.name if sec_obj else None
+
+        fl = await session.execute(select(housing.Floor).where(housing.Floor.id == item.floor_id))
+        fl_obj = fl.scalar_one_or_none()
+        d["floor_number"] = fl_obj.floor_number if fl_obj else None
+
+        enriched_items.append(d)
+
+    return schemas.DailyPlanResponse(
+        date=date,
+        housing_id=housing_id,
+        housing_name=housing_obj.name,
+        total_items=len(plan_items),
+        items=enriched_items,
+    )
+
+
+@router.get("/contractor/{contractor_id}", response_model=schemas.ContractorPlanResponse)
+async def get_contractor_plan(
+    contractor_id: str,
+    date: date = Query(..., description="Дата план-наряда"),
+    housing_id: Optional[str] = Query(None, description="ID корпуса (опционально)"),
+    session: AsyncSession = Depends(get_session)
+):
+    """Получить план-наряд конкретного подрядчика"""
+    # Проверяем существование подрядчика
+    result = await session.execute(
+        select(contractor.Contractor).where(contractor.Contractor.id == contractor_id)
+    )
+    contractor_obj = result.scalar_one_or_none()
+    
+    if not contractor_obj:
+        raise HTTPException(status_code=404, detail="Contractor not found")
+    
+    # Формируем запрос
+    query = select(plan_models.PlanItem).where(
+        plan_models.PlanItem.date == date,
+        plan_models.PlanItem.contractor_id == contractor_id
+    )
+    
+    if housing_id:
+        query = query.where(plan_models.PlanItem.housing_id == housing_id)
+    
+    result = await session.execute(query.order_by(plan_models.PlanItem.housing_id))
+    plan_items = result.scalars().all()
+    
+    # Загружаем дополнительные данные
+    enriched_items = []
+    for item in plan_items:
+        # Загружаем секцию
+        result = await session.execute(
+            select(housing.Section).where(housing.Section.id == item.section_id)
+        )
+        section = result.scalar_one_or_none()
+        
+        # Загружаем этаж
+        result = await session.execute(
+            select(housing.Floor).where(housing.Floor.id == item.floor_id)
+        )
+        floor = result.scalar_one_or_none()
+        
+        # Загружаем вид работ
+        result = await session.execute(
+            select(work.WorkType).where(work.WorkType.id == item.work_type_id)
+        )
+        work_type = result.scalar_one_or_none()
+        
+        # Добавляем дополнительные поля
+        item.section_name = section.name if section else None
+        item.floor_number = floor.floor_number if floor else None
+        item.work_type_name = work_type.name if work_type else None
+        item.contractor_name = contractor_obj.name
+        
+        enriched_items.append(item)
+    
+    return schemas.ContractorPlanResponse(
+        date=date,
+        housing_id=housing_id,
+        contractor_id=contractor_id,
+        contractor_name=contractor_obj.name,
+        items=enriched_items,
+        total_items=len(plan_items)
+    )
+
+
+@router.patch("/{plan_id}/confirm", response_model=schemas.PlanItem)
+async def confirm_plan_item(
+    plan_id: str,
+    request: schemas.PlanConfirmRequest,
+    session: AsyncSession = Depends(get_session)
+):
+    """Подтверждение строки план-наряда РС"""
+    result = await session.execute(
+        select(plan_models.PlanItem).where(plan_models.PlanItem.id == plan_id)
+    )
+    plan_item = result.scalar_one_or_none()
+    
+    if not plan_item:
+        raise HTTPException(status_code=404, detail="Plan item not found")
+    
+    if plan_item.rs_confirmed:
+        raise HTTPException(status_code=400, detail="Plan item already confirmed")
+    
+    # Подтверждаем
+    plan_item.rs_confirmed = True
+    plan_item.rs_confirmed_at = datetime.utcnow()
+    plan_item.rs_confirmed_by = request.confirmed_by
+    plan_item.status = plan_models.PlanStatus.CONFIRMED
+    
+    await session.commit()
+    await session.refresh(plan_item)
+    
+    return plan_item
+
+
+@router.patch("/{plan_id}/adjust", response_model=schemas.PlanItem)
+async def adjust_plan_item(
+    plan_id: str,
+    request: schemas.PlanAdjustRequest,
+    session: AsyncSession = Depends(get_session)
+):
+    """Корректировка строки план-наряда РС"""
+    result = await session.execute(
+        select(plan_models.PlanItem).where(plan_models.PlanItem.id == plan_id)
+    )
+    plan_item = result.scalar_one_or_none()
+    
+    if not plan_item:
+        raise HTTPException(status_code=404, detail="Plan item not found")
+    
+    if not plan_item.rs_confirmed:
+        raise HTTPException(status_code=400, detail="Plan item must be confirmed before adjustment")
+    
+    # Сохраняем исходные значения
+    original_values = {
+        "planned_volume": str(plan_item.planned_volume),
+        "section_id": str(plan_item.section_id),
+        "floor_id": str(plan_item.floor_id),
+        "work_type_id": str(plan_item.work_type_id)
+    }
+    
+    # Применяем изменения
+    for change in request.changes:
+        field = change.get("field")
+        new_value = change.get("new_value")
+        
+        if not field or new_value is None:
+            continue
+        
+        if field not in original_values:
+            raise HTTPException(status_code=400, detail=f"Invalid field: {field}")
+        
+        # Создаём запись корректировки
+        adjustment = plan_models.PlanAdjustment(
+            plan_item_id=plan_id,
+            original_field=field,
+            original_value=original_values[field],
+            new_value=str(new_value),
+            reason=request.reason,
+            adjusted_by=request.adjusted_by
+        )
+        session.add(adjustment)
+        
+        # Обновляем значение в план-наряде
+        if field == "planned_volume":
+            plan_item.planned_volume = Decimal(new_value)
+        elif field == "section_id":
+            plan_item.section_id = UUID(new_value)
+        elif field == "floor_id":
+            plan_item.floor_id = UUID(new_value)
+        elif field == "work_type_id":
+            plan_item.work_type_id = UUID(new_value)
+    
+    # Меняем источник на "скорректировано"
+    plan_item.source = plan_models.PlanSource.ADJUSTED
+    
+    await session.commit()
+    await session.refresh(plan_item)
+    
+    return plan_item
+
+
+@router.get("/rs-stats", response_model=schemas.RSStatsResponse)
+async def get_rs_stats(
+    rs_user_id: str = Query(..., description="ID пользователя-РС"),
+    date_from: date = Query(..., description="Начало периода"),
+    date_to: date = Query(..., description="Конец периода"),
+    housing_id: Optional[str] = Query(None, description="ID корпуса (опционально)"),
+    session: AsyncSession = Depends(get_session)
+):
+    """Статистика корректировок РС"""
+    # Получаем план-наряды РС
+    query = select(plan_models.PlanItem).where(
+        plan_models.PlanItem.rs_confirmed_by == rs_user_id,
+        plan_models.PlanItem.date >= date_from,
+        plan_models.PlanItem.date <= date_to
+    )
+    
+    if housing_id:
+        query = query.where(plan_models.PlanItem.housing_id == housing_id)
+    
+    result = await session.execute(query)
+    plans = result.scalars().all()
+    
+    total_plans = len(plans)
+    
+    # Получаем корректировки РС
+    from ..models.plan import PlanAdjustment
+    query = select(PlanAdjustment).where(
+        PlanAdjustment.adjusted_by == rs_user_id,
+        func.date(PlanAdjustment.adjusted_at) >= date_from,
+        func.date(PlanAdjustment.adjusted_at) <= date_to
+    )
+    
+    if housing_id:
+        # Нужно присоединить plan_items для фильтрации по housing_id
+        pass
+    
+    result = await session.execute(query)
+    adjustments = result.scalars().all()
+    
+    total_adjustments = len(adjustments)
+    
+    # Рассчитываем % отклонения от эталона
+    deviation_rate = Decimal('0')
+    if total_plans > 0:
+        # Находим автосгенерированные планы
+        auto_plans = [p for p in plans if p.source == plan_models.PlanSource.AUTO]
+        if auto_plans:
+            # Находим скорректированные автосгенерированные планы
+            adjusted_auto = [p for p in auto_plans if p.source == plan_models.PlanSource.ADJUSTED]
+            deviation_rate = Decimal(len(adjusted_auto)) / Decimal(len(auto_plans)) * Decimal('100')
+    
+    # Находим популярные причины корректировок
+    adjustment_reasons = {}
+    for adj in adjustments:
+        if adj.reason in adjustment_reasons:
+            adjustment_reasons[adj.reason] += 1
+        else:
+            adjustment_reasons[adj.reason] = 1
+    
+    top_reasons = [
+        {"reason": reason, "count": count}
+        for reason, count in sorted(
+            adjustment_reasons.items(), 
+            key=lambda x: x[1], 
+            reverse=True
+        )[:10]  # Топ-10 причин
+    ]
+    
+    return schemas.RSStatsResponse(
+        rs_user_id=rs_user_id,
+        date_from=date_from,
+        date_to=date_to,
+        total_plans=total_plans,
+        total_adjustments=total_adjustments,
+        deviation_rate=deviation_rate,
+        top_adjustment_reasons=top_reasons
+    )
+
+
+@router.delete("/{plan_id}")
+async def delete_plan_item(
+    plan_id: str,
+    session: AsyncSession = Depends(get_session)
+):
+    """Удалить строку план-наряда"""
+    result = await session.execute(
+        select(plan_models.PlanItem).where(plan_models.PlanItem.id == plan_id)
+    )
+    plan_item = result.scalar_one_or_none()
+    
+    if not plan_item:
+        raise HTTPException(status_code=404, detail="Plan item not found")
+    
+    await session.delete(plan_item)
+    await session.commit()
+    
+    return {"message": "Plan item deleted successfully"}

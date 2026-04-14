@@ -1,0 +1,266 @@
+from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from uuid import UUID
+from datetime import date, datetime, timedelta
+from typing import Optional, List
+from decimal import Decimal
+
+from ..database import get_db
+from ..models.reconciliation import ReconciliationResult, DailySummary, ReconciliationStatus, ReconciliationPattern
+from ..models.housing import Housing, Section, Floor
+from ..models.contractor import Contractor
+from ..models.work import WorkType
+from ..schemas.reconciliation import ReconciliationResult as ReconciliationResultSchema, ReconciliationResultWithDetails, DailySummary as DailySummarySchema, ReconciliationRun, ReconciliationStats
+from ..services.reconciliation import run_reconciliation
+
+router = APIRouter(prefix="/api/v1/reconciliation", tags=["reconciliation"])
+
+@router.post("/run")
+async def trigger_reconciliation(
+    run_data: ReconciliationRun,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db)
+):
+    """Запустить сверку план/факт для указанной даты"""
+    # Проверяем существование корпуса если указан
+    if run_data.housing_id:
+        housing_result = await db.execute(
+            select(Housing).where(Housing.id == run_data.housing_id)
+        )
+        if not housing_result.scalar_one_or_none():
+            raise HTTPException(status_code=404, detail="Корпус не найден")
+    
+    # Запускаем сверку в фоновой задаче
+    background_tasks.add_task(
+        run_reconciliation,
+        run_data.date,
+        run_data.housing_id,
+        db
+    )
+    
+    return {
+        "message": "Сверка запущена в фоновом режиме",
+        "date": run_data.date,
+        "housing_id": run_data.housing_id
+    }
+
+@router.get("/", response_model=list[ReconciliationResultWithDetails])
+async def get_reconciliation_results(
+    date_from: date,
+    date_to: Optional[date] = None,
+    housing_id: Optional[UUID] = None,
+    contractor_id: Optional[UUID] = None,
+    status: Optional[ReconciliationStatus] = None,
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db)
+):
+    """Получить результаты сверки с фильтрами"""
+    query = select(ReconciliationResult).where(ReconciliationResult.date >= date_from)
+    
+    if date_to:
+        query = query.where(ReconciliationResult.date <= date_to)
+    if housing_id:
+        query = query.where(ReconciliationResult.housing_id == housing_id)
+    if contractor_id:
+        query = query.where(ReconciliationResult.contractor_id == contractor_id)
+    if status:
+        query = query.where(ReconciliationResult.status == status)
+    
+    query = query.order_by(ReconciliationResult.date.desc(), ReconciliationResult.housing_id).limit(limit).offset(offset)
+    
+    result = await db.execute(query)
+    results = result.scalars().all()
+    
+    # Обогащаем именами
+    enriched = []
+    for r in results:
+        d = {
+            "id": r.id, "date": r.date, "created_at": r.created_at,
+            "housing_id": r.housing_id, "section_id": r.section_id,
+            "floor_id": r.floor_id, "work_type_id": r.work_type_id,
+            "contractor_id": r.contractor_id,
+            "planned_volume": r.planned_volume, "actual_volume": r.actual_volume,
+            "completion_ratio": r.completion_ratio,
+            "status": r.status.value if hasattr(r.status, 'value') else str(r.status),
+            "pattern": r.pattern.value if r.pattern and hasattr(r.pattern, 'value') else (str(r.pattern) if r.pattern else None),
+        }
+        h = (await db.execute(select(Housing).where(Housing.id == r.housing_id))).scalar_one_or_none()
+        d["housing_name"] = h.name if h else None
+
+        s = (await db.execute(select(Section).where(Section.id == r.section_id))).scalar_one_or_none()
+        d["section_name"] = s.name if s else None
+
+        f = (await db.execute(select(Floor).where(Floor.id == r.floor_id))).scalar_one_or_none()
+        d["floor_name"] = f.name if f else None
+
+        w = (await db.execute(select(WorkType).where(WorkType.id == r.work_type_id))).scalar_one_or_none()
+        d["work_name"] = w.name if w else None
+
+        c = (await db.execute(select(Contractor).where(Contractor.id == r.contractor_id))).scalar_one_or_none()
+        d["contractor_name"] = c.name if c else None
+
+        enriched.append(d)
+    
+    return enriched
+
+@router.get("/summary", response_model=list[DailySummarySchema])
+async def get_reconciliation_summary(
+    date_from: date,
+    date_to: Optional[date] = None,
+    housing_id: Optional[UUID] = None,
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db)
+):
+    """Получить сводки сверки по дням"""
+    query = select(DailySummary).where(DailySummary.date >= date_from)
+    
+    if date_to:
+        query = query.where(DailySummary.date <= date_to)
+    if housing_id:
+        query = query.where(DailySummary.housing_id == housing_id)
+    
+    query = query.order_by(DailySummary.date.desc()).limit(limit).offset(offset)
+    
+    result = await db.execute(query)
+    summaries = result.scalars().all()
+    
+    return summaries
+
+@router.get("/contractor/{contractor_id}")
+async def get_contractor_reconciliation_stats(
+    contractor_id: UUID,
+    start_date: date,
+    end_date: date,
+    db: AsyncSession = Depends(get_db)
+):
+    """Получить статистику сверки для конкретного подрядчика"""
+    # Проверяем существование подрядчика
+    contractor_result = await db.execute(
+        select(Contractor).where(Contractor.id == contractor_id)
+    )
+    contractor = contractor_result.scalar_one_or_none()
+    
+    if not contractor:
+        raise HTTPException(status_code=404, detail="Подрядчик не найден")
+    
+    # Получаем результаты сверки
+    result = await db.execute(
+        select(ReconciliationResult)
+        .where(
+            ReconciliationResult.contractor_id == contractor_id,
+            ReconciliationResult.date >= start_date,
+            ReconciliationResult.date <= end_date
+        )
+    )
+    results = result.scalars().all()
+    
+    # Агрегируем статистику
+    total = len(results)
+    by_status = {status.value: 0 for status in ReconciliationStatus}
+    by_housing = {}
+    
+    for rec in results:
+        by_status[rec.status.value] = by_status.get(rec.status.value, 0) + 1
+        
+        # Статистика по корпусам
+        if rec.housing_id not in by_housing:
+            by_housing[rec.housing_id] = {
+                "total": 0,
+                "by_status": {status.value: 0 for status in ReconciliationStatus}
+            }
+        
+        by_housing[rec.housing_id]["total"] += 1
+        by_housing[rec.housing_id]["by_status"][rec.status.value] += 1
+    
+    # Получаем названия корпусов
+    housing_details = {}
+    if by_housing:
+        housing_ids = list(by_housing.keys())
+        housing_result = await db.execute(
+            select(Housing).where(Housing.id.in_(housing_ids))
+        )
+        housings = housing_result.scalars().all()
+        for housing in housings:
+            housing_details[housing.id] = housing.name
+    
+    # Рассчитываем проценты
+    stats = ReconciliationStats(
+        start_date=start_date,
+        end_date=end_date,
+        total_results=total,
+        by_status=by_status,
+        by_housing={
+            housing_details.get(hid, hid): data
+            for hid, data in by_housing.items()
+        },
+        completion_rate=Decimal((by_status.get("DONE_FULL", 0) + by_status.get("DONE_OVER", 0)) / total * 100 if total > 0 else 0),
+        weighted_completion=Decimal(0),  # Рассчитывается в сервисе сверки
+        submission_rate=Decimal((total - by_status.get("NO_REPORT", 0)) / total * 100 if total > 0 else 0)
+    )
+    
+    return stats
+
+@router.get("/patterns")
+async def get_patterns_analysis(
+    date_from: date,
+    date_to: Optional[date] = None,
+    housing_id: Optional[UUID] = None,
+    contractor_id: Optional[UUID] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """Анализ паттернов в результатах сверки"""
+    query = select(ReconciliationResult).where(
+        ReconciliationResult.date >= date_from,
+        ReconciliationResult.pattern.is_not(None)
+    )
+    
+    if date_to:
+        query = query.where(ReconciliationResult.date <= date_to)
+    if housing_id:
+        query = query.where(ReconciliationResult.housing_id == housing_id)
+    if contractor_id:
+        query = query.where(ReconciliationResult.contractor_id == contractor_id)
+    
+    result = await db.execute(query)
+    results = result.scalars().all()
+    
+    # Группируем по паттернам
+    patterns = {}
+    for rec in results:
+        pattern = rec.pattern.value
+        if pattern not in patterns:
+            patterns[pattern] = {
+                "count": 0,
+                "contractors": set(),
+                "work_types": set()
+            }
+        
+        patterns[pattern]["count"] += 1
+        patterns[pattern]["contractors"].add(rec.contractor_id)
+        
+        # Получаем имя вида работ
+        work_result = await db.execute(
+            select("work_types.name").where(
+                "work_types.id" == rec.work_type_id
+            )
+        )
+        work_name = work_result.scalar_one_or_none()
+        if work_name:
+            patterns[pattern]["work_types"].add(work_name)
+    
+    # Преобразуем множества в списки
+    for pattern in patterns:
+        patterns[pattern]["contractors"] = list(patterns[pattern]["contractors"])
+        patterns[pattern]["work_types"] = list(patterns[pattern]["work_types"])
+    
+    return {
+        "period": {
+            "from": date_from,
+            "to": date_to if date_to else date_from
+        },
+        "total_patterns_found": len(results),
+        "patterns": patterns
+    }
