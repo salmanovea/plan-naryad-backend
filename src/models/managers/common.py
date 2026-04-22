@@ -35,7 +35,7 @@ from sqlalchemy.sql.sqltypes import String as StringType
 
 from src.api.schemes import PaginationParams
 from src.config.logger import LoggerProvider
-from src.models.dbo.models import Base
+from src.models.dbo.base_model import Base
 from src.utils.helpers import get_paginated_query, safe_ilike
 
 T = TypeVar("T", bound=Base)
