@@ -11,6 +11,7 @@ class WorkService(BaseService):
         self.work_group_manager = managers.WorkGroupManager(db)
         self.work_type_manager = managers.WorkTypeManager(db)
         self.tech_sequence_manager = managers.TechSequenceItemManager(db)
+        self.housing_manager = managers.HousingManager(db)
 
 
 async def get_work_service(db: AsyncSession = Depends(get_session)) -> WorkService:

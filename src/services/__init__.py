@@ -1,5 +1,6 @@
 from src.services.alert.service import AlertService, get_alert_service
 from src.services.contractor.service import ContractorService, get_contractor_service
+from src.services.dashboard.service import DashboardService, get_dashboard_service
 from src.services.fact.service import FactService, get_fact_service
 from src.services.housing.service import HousingService, get_housing_service
 from src.services.plan.service import AutogenerationService, get_plan_service

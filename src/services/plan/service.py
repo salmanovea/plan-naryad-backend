@@ -28,6 +28,8 @@ class AutogenerationService(BaseService):
         self.work_type_manager = managers.WorkTypeManager(db)
         self.tech_sequence_manager = managers.TechSequenceItemManager(db)
         self.contractor_assignment_manager = managers.ContractorAssignmentManager(db)
+        self.contractor_manager = managers.ContractorManager(db)
+        self.plan_adjustment_manager = managers.PlanAdjustmentManager(db)
 
     def _is_available(
         self,
