@@ -1,5 +1,5 @@
 from datetime import date
-from typing import List, Optional
+from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -17,17 +17,14 @@ from src.api.v1.workforce.schemes import (
     CreateArticleMappingRequest,
     CreateChallengeRequest,
     CreateViolationRequest,
-    CreateWfContractorRequest,
     CreateWfHeadcountFactRequest,
     CreateWfHeadcountPlanRequest,
     CreateWfProjectObjectRequest,
     CreateWfProjectRequest,
     CreateWfWorkforceNormRequest,
-    UnmappedArticleSchema,
     UpdateChallengeRequest,
     UpdateViolationRequest,
     UpdateWfProjectRequest,
-    WfContractorSchema,
     WfHeadcountFactSchema,
     WfHeadcountPlanSchema,
     WfProjectFilters,
@@ -245,43 +242,6 @@ async def delete_project_object(
 ) -> DataResponseSchema[dict]:
     await service.wf_project_object_manager.delete_by_id(object_id)
     return DataResponseSchema[dict](data={"deleted": str(object_id)})
-
-
-# ── WfContractor ──────────────────────────────────────────────────────────────
-
-@workforce_router.get("/wf-contractors", responses=get_responses(ResponseGroup.ALL_ERRORS))
-@catch_all_exceptions
-async def list_wf_contractors(
-    service: WorkforceService = Depends(get_workforce_service),
-) -> ListDataResponseSchema[WfContractorSchema]:
-    items = await service.wf_contractor_manager.search(order_by=["name"])
-    return ListDataResponseSchema[WfContractorSchema].create(
-        list_data=[WfContractorSchema.model_validate(i) for i in items],
-    )
-
-
-@workforce_router.post(
-    "/wf-contractors", responses=get_responses(ResponseGroup.ALL_ERRORS), status_code=201
-)
-@catch_all_exceptions
-async def create_wf_contractor(
-    body: CreateWfContractorRequest,
-    service: WorkforceService = Depends(get_workforce_service),
-) -> DataResponseSchema[WfContractorSchema]:
-    item = await service.wf_contractor_manager.create(body.model_dump())
-    return DataResponseSchema[WfContractorSchema](data=WfContractorSchema.model_validate(item))
-
-
-@workforce_router.delete(
-    "/wf-contractors/{contractor_id}", responses=get_responses(ResponseGroup.ALL_ERRORS)
-)
-@catch_all_exceptions
-async def delete_wf_contractor(
-    contractor_id: UUID,
-    service: WorkforceService = Depends(get_workforce_service),
-) -> DataResponseSchema[dict]:
-    await service.wf_contractor_manager.delete_by_id(contractor_id)
-    return DataResponseSchema[dict](data={"deleted": str(contractor_id)})
 
 
 # ── WorkforceNorm ─────────────────────────────────────────────────────────────

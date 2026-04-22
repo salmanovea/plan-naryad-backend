@@ -4,11 +4,11 @@ from uuid import UUID
 from sqlalchemy import ARRAY, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from src.models.dbo.mixins import IDMixin
+from src.models.dbo.mixins import IDMixin, RaportMixin
 from src.models.dbo.base_model import Base
 
 
-class Contractor(IDMixin, Base):
+class Contractor(IDMixin, RaportMixin, Base):
     """Contractor company."""
 
     __tablename__ = "contractors"
@@ -19,6 +19,7 @@ class Contractor(IDMixin, Base):
     contact_person: Mapped[Optional[str]] = mapped_column(String(255))
     phone: Mapped[Optional[str]] = mapped_column(String(50))
     email: Mapped[Optional[str]] = mapped_column(String(100))
+    description: Mapped[Optional[str]] = mapped_column(String(1000))
 
     assignments: Mapped[List["ContractorAssignment"]] = relationship(
         back_populates="contractor",

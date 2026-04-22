@@ -13,11 +13,9 @@ from src.models import managers
 from src.models.dbo.tables.workforce import (
     CheckpointStatus,
     ViolationType,
-    WfBudgetItem,
     WfBudgetPeriod,
     WfChallenge,
     WfChallengeItem,
-    WfContractor,
     WfContractorAssignment,
     WfHeadcountFact,
     WfHeadcountPlan,
@@ -79,7 +77,7 @@ class WorkforceService(BaseService):
         self.wf_budget_item_manager = managers.WfBudgetItemManager(db)
         self.wf_headcount_fact_manager = managers.WfHeadcountFactManager(db)
         self.wf_headcount_plan_manager = managers.WfHeadcountPlanManager(db)
-        self.wf_contractor_manager = managers.WfContractorManager(db)
+        self.contractor_manager = managers.ContractorManager(db)
         self.wf_contractor_assignment_manager = managers.WfContractorAssignmentManager(db)
         self.wf_challenge_manager = managers.WfChallengeManager(db)
         self.wf_challenge_item_manager = managers.WfChallengeItemManager(db)
@@ -433,7 +431,7 @@ class WorkforceService(BaseService):
         contractor_ids = {r.contractor_id for r in fact_rows if r.contractor_id}
         contractors: Dict[UUID, str] = {}
         if contractor_ids:
-            c_list = await self.wf_contractor_manager.get_by_ids(contractor_ids)
+            c_list = await self.contractor_manager.get_by_ids(contractor_ids)
             contractors = {c.id: c.name for c in c_list}
 
         result = []
@@ -529,7 +527,7 @@ class WorkforceService(BaseService):
     async def calc_contractor_rating(self) -> List[ContractorRatingRow]:
         today = date.today()
         since_3m = today - timedelta(days=90)
-        contractors = await self.wf_contractor_manager.search()
+        contractors = await self.contractor_manager.search()
 
         rows = []
         for c in contractors:
@@ -723,7 +721,7 @@ class WorkforceService(BaseService):
                 o = await self.wf_project_object_manager.get_by_id(v.object_id)
                 obj_cache[v.object_id] = o.name if o else "?"
             if v.contractor_id and v.contractor_id not in contr_cache:
-                c = await self.wf_contractor_manager.get_by_id(v.contractor_id)
+                c = await self.contractor_manager.get_by_id(v.contractor_id)
                 contr_cache[v.contractor_id] = c.name if c else None
 
             result.append(ViolationOut(

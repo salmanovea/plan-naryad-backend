@@ -6,7 +6,7 @@ from uuid import UUID
 from sqlalchemy import ARRAY, ForeignKey, Integer, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from src.models.dbo.mixins import IDMixin
+from src.models.dbo.mixins import IDMixin, RaportMixin
 from src.models.dbo.base_model import Base
 
 
@@ -15,7 +15,7 @@ class DependencyType(str, Enum):
     START_TO_START = "start_to_start"
 
 
-class WorkGroup(IDMixin, Base):
+class WorkGroup(IDMixin, RaportMixin, Base):
     """Work category (SMR, finishing, engineering, etc.)."""
 
     __tablename__ = "work_groups"
@@ -28,7 +28,7 @@ class WorkGroup(IDMixin, Base):
     work_types: Mapped[List["WorkType"]] = relationship(back_populates="group", cascade="all, delete-orphan")
 
 
-class WorkType(IDMixin, Base):
+class WorkType(IDMixin, RaportMixin, Base):
     """Specific work type within a group."""
 
     __tablename__ = "work_types"

@@ -20,7 +20,6 @@ from src.models.dbo.tables.workforce import (  # noqa: F401
     WfBudgetPeriod,
     WfChallenge,
     WfChallengeItem,
-    WfContractor,
     WfContractorAssignment,
     WfHeadcountFact,
     WfHeadcountPlan,

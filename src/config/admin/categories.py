@@ -1,0 +1,7 @@
+CATEGORY_PROJECT_STRUCTURE = "Структура проекта"
+CATEGORY_WORK_CATALOG = "Каталог работ"
+CATEGORY_CONTRACTORS = "Подрядчики"
+CATEGORY_PLAN = "Планирование"
+CATEGORY_WORKFORCE = "Трудовые ресурсы"
+CATEGORY_SYNC = "Синхронизация"
+CATEGORY_SYSTEM = "Система"

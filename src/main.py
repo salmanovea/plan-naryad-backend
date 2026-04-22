@@ -12,7 +12,9 @@ from src.api.v1.housing.views import housing_router
 from src.api.v1.plan.views import plan_router
 from src.api.v1.reconciliation.views import reconciliation_router
 from src.api.v1.work.views import work_router
+from src.api.v1.sync.views import sync_router
 from src.api.v1.workforce.views import workforce_router
+from src.config.admin.config import init_admin
 from src.config.logger import LoggerProvider
 from src.config.postgres.db_config import async_engine
 from src.config.settings import app_config
@@ -58,6 +60,9 @@ app.include_router(reconciliation_router, prefix=_PREFIX)
 app.include_router(alert_router, prefix=_PREFIX)
 app.include_router(dashboard_router, prefix=_PREFIX)
 app.include_router(workforce_router, prefix=_PREFIX)
+app.include_router(sync_router, prefix=_PREFIX)
+
+init_admin(app)
 
 
 @app.get("/health")

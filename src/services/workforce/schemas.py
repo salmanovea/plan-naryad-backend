@@ -6,7 +6,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
-from src.models.dbo.tables.workforce import ViolationType
 
 
 class WfProjectOut(BaseModel):

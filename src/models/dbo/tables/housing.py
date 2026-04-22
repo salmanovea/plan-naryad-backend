@@ -2,13 +2,14 @@ from typing import List, Optional
 from uuid import UUID
 
 from sqlalchemy import ForeignKey, Integer, String
+from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from src.models.dbo.mixins import IDMixin
+from src.models.dbo.mixins import IDMixin, RaportMixin
 from src.models.dbo.base_model import Base
 
 
-class Housing(IDMixin, Base):
+class Housing(IDMixin, RaportMixin, Base):
     """Building (corpus) within a residential complex."""
 
     __tablename__ = "housings"
@@ -16,11 +17,17 @@ class Housing(IDMixin, Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     complex_name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(String(1000))
+    construction_object_id: Mapped[Optional[UUID]] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("wf_project_objects.id", name="fk_housings_construction_object_id"),
+        nullable=True,
+        index=True,
+    )
 
     sections: Mapped[List["Section"]] = relationship(back_populates="housing", cascade="all, delete-orphan")
 
 
-class Section(IDMixin, Base):
+class Section(IDMixin, RaportMixin, Base):
     """Section within a building."""
 
     __tablename__ = "sections"
@@ -38,7 +45,7 @@ class Section(IDMixin, Base):
     floors: Mapped[List["Floor"]] = relationship(back_populates="section", cascade="all, delete-orphan")
 
 
-class Floor(IDMixin, Base):
+class Floor(IDMixin, RaportMixin, Base):
     """Floor within a section."""
 
     __tablename__ = "floors"

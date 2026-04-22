@@ -8,7 +8,7 @@ import sqlalchemy as sa
 from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from src.models.dbo.mixins import IDMixin
+from src.models.dbo.mixins import IDMixin, RaportMixin
 from src.models.dbo.base_model import Base
 
 
@@ -41,7 +41,7 @@ class ViolationType(str, Enum):
     PLAN_NOT_MET = "plan_not_met"
 
 
-class WfProject(IDMixin, Base):
+class WfProject(IDMixin, RaportMixin, Base):
     """Workforce project (residential complex or construction site)."""
 
     __tablename__ = "wf_projects"
@@ -62,7 +62,7 @@ class WfProject(IDMixin, Base):
     )
 
 
-class WfProjectObject(IDMixin, Base):
+class WfProjectObject(IDMixin, RaportMixin, Base):
     """Object (building / section) within a workforce project."""
 
     __tablename__ = "wf_project_objects"
@@ -139,7 +139,7 @@ class WfBudgetItem(IDMixin, Base):
     management_completion_amount: Mapped[Decimal] = mapped_column(Numeric(16, 2), nullable=False, default=0)
     contractor_id: Mapped[Optional[UUID]] = mapped_column(
         sa.UUID,
-        ForeignKey("wf_contractors.id", name="fk_wf_budget_items_contractor_id"),
+        ForeignKey("contractors.id", name="fk_wf_budget_items_contractor_id"),
         index=True,
     )
     remaining_amount: Mapped[Optional[Decimal]] = mapped_column(Numeric(16, 2))
@@ -147,7 +147,7 @@ class WfBudgetItem(IDMixin, Base):
 
     budget_period: Mapped["WfBudgetPeriod"] = relationship(back_populates="items")
     project_object: Mapped[Optional["WfProjectObject"]] = relationship(back_populates="budget_items")
-    contractor: Mapped[Optional["WfContractor"]] = relationship(back_populates="budget_items")
+    contractor: Mapped[Optional["Contractor"]] = relationship()  # type: ignore[name-defined]
 
 
 class WfHeadcountFact(IDMixin, Base):
@@ -172,13 +172,13 @@ class WfHeadcountFact(IDMixin, Base):
     source: Mapped[str] = mapped_column(String(20), nullable=False, default=HeadcountSource.MANUAL)
     contractor_id: Mapped[Optional[UUID]] = mapped_column(
         sa.UUID,
-        ForeignKey("wf_contractors.id", name="fk_wf_headcount_facts_contractor_id"),
+        ForeignKey("contractors.id", name="fk_wf_headcount_facts_contractor_id"),
         index=True,
     )
 
     project: Mapped["WfProject"] = relationship(back_populates="headcount_facts")
     project_object: Mapped[Optional["WfProjectObject"]] = relationship(back_populates="headcount_facts")
-    contractor: Mapped[Optional["WfContractor"]] = relationship(back_populates="headcount_facts")
+    contractor: Mapped[Optional["Contractor"]] = relationship()  # type: ignore[name-defined]
 
 
 class WfHeadcountPlan(IDMixin, Base):
@@ -202,31 +202,13 @@ class WfHeadcountPlan(IDMixin, Base):
     planned_count: Mapped[int] = mapped_column(Integer, nullable=False)
     contractor_id: Mapped[Optional[UUID]] = mapped_column(
         sa.UUID,
-        ForeignKey("wf_contractors.id", name="fk_wf_headcount_plans_contractor_id"),
+        ForeignKey("contractors.id", name="fk_wf_headcount_plans_contractor_id"),
         index=True,
     )
 
     project: Mapped["WfProject"] = relationship(back_populates="headcount_plans")
     project_object: Mapped[Optional["WfProjectObject"]] = relationship(back_populates="headcount_plans")
-    contractor: Mapped[Optional["WfContractor"]] = relationship(back_populates="headcount_plans")
-
-
-class WfContractor(IDMixin, Base):
-    """Workforce contractor."""
-
-    __tablename__ = "wf_contractors"
-
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    inn: Mapped[Optional[str]] = mapped_column(String(20))
-    description: Mapped[Optional[str]] = mapped_column(String(1000))
-
-    assignments: Mapped[List["WfContractorAssignment"]] = relationship(
-        back_populates="contractor", cascade="all, delete-orphan"
-    )
-    headcount_facts: Mapped[List["WfHeadcountFact"]] = relationship(back_populates="contractor")
-    headcount_plans: Mapped[List["WfHeadcountPlan"]] = relationship(back_populates="contractor")
-    budget_items: Mapped[List["WfBudgetItem"]] = relationship(back_populates="contractor")
-    violations: Mapped[List["WfViolation"]] = relationship(back_populates="contractor")
+    contractor: Mapped[Optional["Contractor"]] = relationship()  # type: ignore[name-defined]
 
 
 class WfContractorAssignment(IDMixin, Base):
@@ -236,7 +218,7 @@ class WfContractorAssignment(IDMixin, Base):
 
     contractor_id: Mapped[UUID] = mapped_column(
         sa.UUID,
-        ForeignKey("wf_contractors.id", name="fk_wf_contractor_assignments_contractor_id"),
+        ForeignKey("contractors.id", name="fk_wf_contractor_assignments_contractor_id"),
         nullable=False,
         index=True,
     )
@@ -248,7 +230,7 @@ class WfContractorAssignment(IDMixin, Base):
     )
     work_type: Mapped[str] = mapped_column(String(255), nullable=False)
 
-    contractor: Mapped["WfContractor"] = relationship(back_populates="assignments")
+    contractor: Mapped["Contractor"] = relationship()  # type: ignore[name-defined]
     project_object: Mapped["WfProjectObject"] = relationship(back_populates="contractor_assignments")
 
 
@@ -377,7 +359,7 @@ class WfViolation(IDMixin, Base):
     work_type: Mapped[str] = mapped_column(String(255), nullable=False)
     contractor_id: Mapped[Optional[UUID]] = mapped_column(
         sa.UUID,
-        ForeignKey("wf_contractors.id", name="fk_wf_violations_contractor_id"),
+        ForeignKey("contractors.id", name="fk_wf_violations_contractor_id"),
         index=True,
     )
     violation_date: Mapped[date] = mapped_column(Date, nullable=False)
@@ -391,4 +373,4 @@ class WfViolation(IDMixin, Base):
 
     project: Mapped["WfProject"] = relationship()
     project_object: Mapped["WfProjectObject"] = relationship()
-    contractor: Mapped[Optional["WfContractor"]] = relationship(back_populates="violations")
+    contractor: Mapped[Optional["Contractor"]] = relationship()  # type: ignore[name-defined]

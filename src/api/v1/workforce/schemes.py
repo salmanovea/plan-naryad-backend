@@ -130,22 +130,6 @@ class WfHeadcountPlanSchema(IDMixinSchema):
     contractor_id: Optional[UUID] = None
 
 
-# ── WfContractor ─────────────────────────────────────────────────────────────
-
-class CreateWfContractorRequest(BaseModel):
-    name: str
-    inn: Optional[str] = None
-    description: Optional[str] = None
-
-
-class WfContractorSchema(IDMixinSchema):
-    model_config = ConfigDict(from_attributes=True)
-
-    name: str
-    inn: Optional[str] = None
-    description: Optional[str] = None
-
-
 # ── Challenge ─────────────────────────────────────────────────────────────────
 
 class CreateChallengeItemRequest(BaseModel):

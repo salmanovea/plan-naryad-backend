@@ -12,7 +12,6 @@ from src.models.managers.workforce import (
     WfChallengeItemManager,
     WfChallengeManager,
     WfContractorAssignmentManager,
-    WfContractorManager,
     WfHeadcountFactManager,
     WfHeadcountPlanManager,
     WfMobilizationCheckpointManager,

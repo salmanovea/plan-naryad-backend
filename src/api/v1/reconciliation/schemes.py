@@ -1,6 +1,6 @@
-from datetime import date, datetime
+from datetime import date
 from decimal import Decimal
-from typing import Any, List, Optional
+from typing import Any, Optional
 from uuid import UUID
 
 from fastapi import Query

@@ -1,13 +1,16 @@
 import uuid
+from datetime import datetime
+from typing import Optional
 
-from sqlalchemy import Column, DateTime, Integer, func
+from sqlalchemy import DateTime, Integer, String, func
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import Mapped, mapped_column
 
 
 class IDMixin:
-    """Mixin that adds a UUID primary key to a model."""
+    """UUID primary key."""
 
-    id = Column(
+    id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         primary_key=True,
         default=uuid.uuid4,
@@ -15,26 +18,33 @@ class IDMixin:
 
 
 class TimestampMixin:
-    """Mixin that adds `created_at` and `updated_at` audit columns."""
+    """Audit columns: created_at / updated_at."""
 
-    created_at = Column(
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
-        default=func.now(),
+        server_default=func.now(),
     )
-    updated_at = Column(
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
-        default=func.now(),
+        server_default=func.now(),
         onupdate=func.now(),
     )
 
 
 class SortOrderMixin:
-    """Mixin that adds a `sort_order` column for user-controlled ordering."""
+    """User-controlled sort order column."""
 
-    sort_order = Column(
-        Integer,
+    sort_order: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+
+
+class RaportMixin:
+    """External Raport system identifier for sync."""
+
+    raport_id: Mapped[Optional[str]] = mapped_column(
+        String(255),
+        unique=True,
         nullable=True,
         index=True,
     )

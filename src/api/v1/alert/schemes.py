@@ -3,10 +3,9 @@ from typing import List, Optional
 from uuid import UUID
 
 from fastapi import Query
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 from src.api.schemes import HousingBaseFilters, IDMixinSchema
-from src.models.dbo.tables.alert import AlertLevel, AlertType, RecipientRole
 
 
 class AcknowledgeAlertRequest(BaseModel):

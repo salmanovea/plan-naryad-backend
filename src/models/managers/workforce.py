@@ -6,7 +6,6 @@ from src.models.dbo.tables.workforce import (
     WfBudgetPeriod,
     WfChallenge,
     WfChallengeItem,
-    WfContractor,
     WfContractorAssignment,
     WfHeadcountFact,
     WfHeadcountPlan,
@@ -80,16 +79,6 @@ class WfHeadcountPlanManager(BaseManager[WfHeadcountPlan]):
     """Data access for WfHeadcountPlan entities."""
 
     entity = WfHeadcountPlan
-
-    def __init__(self, db: AsyncSession):
-        super().__init__(db)
-
-
-class WfContractorManager(BaseManager[WfContractor]):
-    """Data access for WfContractor entities."""
-
-    entity = WfContractor
-    text_search_fields = {"name": "ilike", "inn": "ilike"}
 
     def __init__(self, db: AsyncSession):
         super().__init__(db)

@@ -1,0 +1,85 @@
+{% extends "sqladmin/layout.html" %}
+
+{% block content %}
+<div class="container-xl">
+    <div class="page-header">
+        <div class="row align-items-center">
+            <div class="col-auto">
+                <h2 class="page-title">
+                    Синхронизация с Рапортом
+                </h2>
+            </div>
+        </div>
+    </div>
+
+    <div class="row row-cards">
+
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">
+                        <i class="fa-solid fa-city me-2"></i>Иерархия объектов
+                    </h3>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted">
+                        Синхронизирует: Проекты → Объекты строительства → Корпуса → Секции → Этажи.
+                    </p>
+                </div>
+                <div class="card-footer">
+                    <form action="/admin/sync/action/objects" method="POST">
+                        <button type="submit" class="btn btn-primary w-100">
+                            <i class="fa-solid fa-rotate me-1"></i>Запустить
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">
+                        <i class="fa-solid fa-hammer me-2"></i>Каталог работ
+                    </h3>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted">
+                        Синхронизирует: Группы работ → Виды работ из Рапорта.
+                    </p>
+                </div>
+                <div class="card-footer">
+                    <form action="/admin/sync/action/work-catalog" method="POST">
+                        <button type="submit" class="btn btn-primary w-100">
+                            <i class="fa-solid fa-rotate me-1"></i>Запустить
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">
+                        <i class="fa-solid fa-hard-hat me-2"></i>Подрядчики
+                    </h3>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted">
+                        Синхронизирует список подрядчиков из Рапорта.
+                    </p>
+                </div>
+                <div class="card-footer">
+                    <form action="/admin/sync/action/contractors" method="POST">
+                        <button type="submit" class="btn btn-primary w-100">
+                            <i class="fa-solid fa-rotate me-1"></i>Запустить
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</div>
+{% endblock %}

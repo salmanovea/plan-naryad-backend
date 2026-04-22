@@ -1,4 +1,5 @@
 import os
+from typing import Optional
 
 from pydantic_settings import BaseSettings
 
@@ -27,6 +28,18 @@ class AppConfig(BaseSettings):
 
     # Business logic limits
     max_items_per_contractor: int = 10
+
+    # Keycloak (used by Raport auth client)
+    keycloak_server_url: Optional[str] = None
+    keycloak_realm: Optional[str] = None
+    keycloak_verify_ssl: bool = True
+
+    # Raport ecosystem — external data source
+    report_api_url: Optional[str] = None
+    report_keycloak_client_id: Optional[str] = None
+    report_keycloak_client_secret: Optional[str] = None
+    report_keycloak_username: Optional[str] = None
+    report_keycloak_password: Optional[str] = None
 
     @property
     def get_db_creds(self):
