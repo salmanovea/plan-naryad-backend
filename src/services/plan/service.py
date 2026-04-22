@@ -136,26 +136,24 @@ class AutogenerationService(BaseService):
         if not housing:
             return []
 
-        sections = await self.section_manager.search(
-            housing_id=housing_id, order_by=["section_number"]
-        )
-        tech_sequence_items = await self.tech_sequence_manager.search(
-            housing_id=housing_id, order_by=["order"]
-        )
+        sections = await self.section_manager.search(housing_id=housing_id, order_by=["section_number"])
+        tech_sequence_items = await self.tech_sequence_manager.search(housing_id=housing_id, order_by=["order"])
 
         tech_sequence: List[Dict] = []
         prev_work_type_id = None
         for item in tech_sequence_items:
-            depends_on = [str(prev_work_type_id)] if prev_work_type_id else []
-            tech_sequence.append({
-                "work_type_id": item.work_type_id,
-                "depends_on": depends_on,
-                "dependency_type": item.dependency_type,
-                "lag_days": item.lag_days,
-                "daily_norm_volume": item.daily_norm_volume,
-                "total_volume": item.total_volume,
-                "estimated_days": item.estimated_days,
-            })
+            depends_on: List[str] = [str(prev_work_type_id)] if prev_work_type_id else []
+            tech_sequence.append(
+                {
+                    "work_type_id": item.work_type_id,
+                    "depends_on": depends_on,
+                    "dependency_type": item.dependency_type,
+                    "lag_days": item.lag_days,
+                    "daily_norm_volume": item.daily_norm_volume,
+                    "total_volume": item.total_volume,
+                    "estimated_days": item.estimated_days,
+                }
+            )
             prev_work_type_id = item.work_type_id
 
         facts = await self.work_fact_manager.search(housing_id=housing_id, date__lt=target_date)
@@ -170,9 +168,7 @@ class AutogenerationService(BaseService):
                 progress[key]["last_fact_date"] = fact.date
 
         work_type_ids = [item.work_type_id for item in tech_sequence_items]
-        plans = await self.plan_item_manager.search(
-            housing_id=housing_id, work_type_id__in=work_type_ids
-        )
+        plans = await self.plan_item_manager.search(housing_id=housing_id, work_type_id__in=work_type_ids)
         planned_volumes: Dict[Tuple[UUID, UUID, UUID], Decimal] = {}
         for plan in plans:
             key = (plan.work_type_id, plan.section_id, plan.floor_id)
@@ -188,9 +184,7 @@ class AutogenerationService(BaseService):
         max_per_contractor = app_config.max_items_per_contractor
 
         for section in sections:
-            floors = await self.floor_manager.search(
-                section_id=section.id, order_by=["floor_number"]
-            )
+            floors = await self.floor_manager.search(section_id=section.id, order_by=["floor_number"])
             for floor in floors:
                 for seq_item in tech_sequence:
                     work_type_id = seq_item["work_type_id"]
@@ -217,18 +211,20 @@ class AutogenerationService(BaseService):
                     if daily_volume <= Decimal("0"):
                         continue
 
-                    plan_items_data.append({
-                        "date": target_date,
-                        "housing_id": housing_id,
-                        "section_id": section.id,
-                        "floor_id": floor.id,
-                        "work_type_id": work_type_id,
-                        "contractor_id": contractor_id,
-                        "planned_volume": daily_volume,
-                        "unit": work_type.unit,
-                        "source": PlanSource.AUTO,
-                        "status": PlanStatus.DRAFT,
-                    })
+                    plan_items_data.append(
+                        {
+                            "date": target_date,
+                            "housing_id": housing_id,
+                            "section_id": section.id,
+                            "floor_id": floor.id,
+                            "work_type_id": work_type_id,
+                            "contractor_id": contractor_id,
+                            "planned_volume": daily_volume,
+                            "unit": work_type.unit,
+                            "source": PlanSource.AUTO,
+                            "status": PlanStatus.DRAFT,
+                        }
+                    )
                     contractor_counts[contractor_id] += 1
 
         if plan_items_data:

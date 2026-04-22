@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 from uuid import UUID
 
 from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Numeric, String, Text, func
@@ -9,6 +9,11 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.dbo.mixins import IDMixin
 from src.models.dbo.base_model import Base
+
+if TYPE_CHECKING:
+    from src.models.dbo.tables.contractor import Contractor
+    from src.models.dbo.tables.housing import Housing, Section, Floor
+    from src.models.dbo.tables.work import WorkType
 
 
 class PlanSource(str, Enum):

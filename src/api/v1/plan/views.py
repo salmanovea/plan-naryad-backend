@@ -57,9 +57,7 @@ async def get_daily_plan(
     housing_id: UUID = Query(..., description="Housing ID"),
     service: AutogenerationService = Depends(get_plan_service),
 ) -> DataResponseSchema[DailyPlanResponse]:
-    items = await service.plan_item_manager.search(
-        date=target_date, housing_id=housing_id
-    )
+    items = await service.plan_item_manager.search(date=target_date, housing_id=housing_id)
     housing = await service.housing_manager.get_by_id(housing_id)
     return DataResponseSchema[DailyPlanResponse](
         data=DailyPlanResponse(
@@ -80,7 +78,7 @@ async def get_contractor_plan(
     housing_id: UUID = Query(None, description="Housing ID filter"),
     service: AutogenerationService = Depends(get_plan_service),
 ) -> DataResponseSchema[ContractorPlanResponse]:
-    filter_kwargs = {"date": target_date, "contractor_id": contractor_id}
+    filter_kwargs: dict = {"date": target_date, "contractor_id": contractor_id}
     if housing_id:
         filter_kwargs["housing_id"] = housing_id
 

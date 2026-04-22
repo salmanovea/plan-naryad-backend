@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 from uuid import UUID
 
 from sqlalchemy import Date, DateTime, ForeignKey, Numeric, String, Text, func
@@ -9,6 +9,11 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.dbo.mixins import IDMixin
 from src.models.dbo.base_model import Base
+
+if TYPE_CHECKING:
+    from src.models.dbo.tables.contractor import Contractor
+    from src.models.dbo.tables.housing import Housing, Section, Floor
+    from src.models.dbo.tables.work import WorkType
 
 
 class FactSource(str, Enum):
@@ -53,7 +58,7 @@ class WorkFact(IDMixin, Base):
     unit: Mapped[str] = mapped_column(String(20), nullable=False)
 
     submitted_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
-    submitted_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    submitted_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     source: Mapped[str] = mapped_column(String(20), default=FactSource.CONTRACTOR_WEB)
 
     comment: Mapped[Optional[str]] = mapped_column(Text)

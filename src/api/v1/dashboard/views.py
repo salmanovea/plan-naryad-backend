@@ -27,6 +27,4 @@ async def get_dashboard_overview(
         date_to=date_to,
         housing_id=filters.housing_id,
     )
-    return DataResponseSchema[DashboardOverviewSchema](
-        data=DashboardOverviewSchema(**overview)
-    )
+    return DataResponseSchema[DashboardOverviewSchema](data=DashboardOverviewSchema(**overview))

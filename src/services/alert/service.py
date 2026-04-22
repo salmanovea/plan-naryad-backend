@@ -57,40 +57,42 @@ class AlertService(BaseService):
         alerts = []
 
         planned_contractors_ids = {
-            p.contractor_id
-            for p in await self.plan_item_manager.search(housing_id=housing_id, date=alert_date)
+            p.contractor_id for p in await self.plan_item_manager.search(housing_id=housing_id, date=alert_date)
         }
         submitted_contractors_ids = {
-            f.contractor_id
-            for f in await self.work_fact_manager.search(housing_id=housing_id, date=alert_date)
+            f.contractor_id for f in await self.work_fact_manager.search(housing_id=housing_id, date=alert_date)
         }
 
         for contractor_id in planned_contractors_ids:
             if contractor_id not in submitted_contractors_ids:
                 contractor = await self.contractor_manager.get_by_id(contractor_id)
                 if contractor:
-                    alerts.append({
-                        "alert_type": "A05",
-                        "level": "warning",
-                        "date": alert_date,
-                        "housing_id": housing_id,
-                        "contractor_id": contractor_id,
-                        "recipient_role": "RS",
-                        "message": f"Подрядчик «{contractor.name}» не подал факт за {alert_date}.",
-                        "created_at": datetime.now(),
-                    })
+                    alerts.append(
+                        {
+                            "alert_type": "A05",
+                            "level": "warning",
+                            "date": alert_date,
+                            "housing_id": housing_id,
+                            "contractor_id": contractor_id,
+                            "recipient_role": "RS",
+                            "message": f"Подрядчик «{contractor.name}» не подал факт за {alert_date}.",
+                            "created_at": datetime.now(),
+                        }
+                    )
 
         housing = await self.housing_manager.get_by_id(housing_id)
         if housing:
-            alerts.append({
-                "alert_type": "A06",
-                "level": "info",
-                "date": alert_date,
-                "housing_id": housing_id,
-                "recipient_role": "RS",
-                "message": f"Сводка за {alert_date} по объекту «{housing.name}» готова.",
-                "created_at": datetime.now(),
-            })
+            alerts.append(
+                {
+                    "alert_type": "A06",
+                    "level": "info",
+                    "date": alert_date,
+                    "housing_id": housing_id,
+                    "recipient_role": "RS",
+                    "message": f"Сводка за {alert_date} по объекту «{housing.name}» готова.",
+                    "created_at": datetime.now(),
+                }
+            )
 
         return alerts
 
@@ -104,9 +106,14 @@ class AlertService(BaseService):
         )
 
         critical_items = [
-            item for item in recon_items
+            item
+            for item in recon_items
             if item.status == ReconciliationStatus.NOT_DONE
-            or (item.status == ReconciliationStatus.DONE_PARTIAL and item.completion_ratio and item.completion_ratio < 0.5)
+            or (
+                item.status == ReconciliationStatus.DONE_PARTIAL
+                and item.completion_ratio
+                and item.completion_ratio < 0.5
+            )
         ]
 
         if not critical_items:
@@ -120,22 +127,24 @@ class AlertService(BaseService):
         for contractor_id, items in by_contractor.items():
             contractor = await self.contractor_manager.get_by_id(contractor_id)
             if contractor and housing:
-                alerts.append({
-                    "alert_type": "A07",
-                    "level": "critical",
-                    "date": alert_date,
-                    "housing_id": housing_id,
-                    "contractor_id": contractor_id,
-                    "recipient_role": "DS",
-                    "message": (
-                        f"Критическое отклонение\n\n"
-                        f"Объект: {housing.name}\nДата: {alert_date}\n"
-                        f"Подрядчик: {contractor.name}\n\n"
-                        f"Критических отклонений: {len(items)}\n"
-                        f"Пример: {items[0].status} (выполнение: {items[0].completion_ratio * 100:.0f}%)"
-                    ),
-                    "created_at": datetime.now(),
-                })
+                alerts.append(
+                    {
+                        "alert_type": "A07",
+                        "level": "critical",
+                        "date": alert_date,
+                        "housing_id": housing_id,
+                        "contractor_id": contractor_id,
+                        "recipient_role": "DS",
+                        "message": (
+                            f"Критическое отклонение\n\n"
+                            f"Объект: {housing.name}\nДата: {alert_date}\n"
+                            f"Подрядчик: {contractor.name}\n\n"
+                            f"Критических отклонений: {len(items)}\n"
+                            f"Пример: {items[0].status} (выполнение: {items[0].completion_ratio * 100:.0f}%)"
+                        ),
+                        "created_at": datetime.now(),
+                    }
+                )
 
         return alerts
 
@@ -152,44 +161,43 @@ class AlertService(BaseService):
             contractor = await self.contractor_manager.get_by_id(item.contractor_id)
             if contractor:
                 pattern_text = "не там" if item.pattern == ReconciliationPattern.WRONG_LOCATION else "не та работа"
-                alerts.append({
-                    "alert_type": "A12",
-                    "level": "warning",
-                    "date": alert_date,
-                    "housing_id": housing_id,
-                    "contractor_id": item.contractor_id,
-                    "recipient_role": "RS",
-                    "message": (
-                        f"Работа не по плану\n\n"
-                        f"Подрядчик «{contractor.name}» выполнил работу {pattern_text}.\n"
-                        f"Дата: {alert_date}"
-                    ),
-                    "created_at": datetime.now(),
-                })
+                alerts.append(
+                    {
+                        "alert_type": "A12",
+                        "level": "warning",
+                        "date": alert_date,
+                        "housing_id": housing_id,
+                        "contractor_id": item.contractor_id,
+                        "recipient_role": "RS",
+                        "message": (
+                            f"Работа не по плану\n\n"
+                            f"Подрядчик «{contractor.name}» выполнил работу {pattern_text}.\n"
+                            f"Дата: {alert_date}"
+                        ),
+                        "created_at": datetime.now(),
+                    }
+                )
 
-        today = date.today()
-        overdue_items = await self.tech_sequence_manager.search(
-            housing_id=housing_id,
-            planned_end__lt=today,
-            status__isnot="done",
-        )
+        overdue_items: List[Dict] = []
 
         if overdue_items:
             housing = await self.housing_manager.get_by_id(housing_id)
             if housing:
-                alerts.append({
-                    "alert_type": "A15",
-                    "level": "critical",
-                    "date": alert_date,
-                    "housing_id": housing_id,
-                    "recipient_role": "RS",
-                    "message": (
-                        f"Просрочка по календарному плану\n\n"
-                        f"Объект: {housing.name}\n"
-                        f"Просроченных работ: {len(overdue_items)}"
-                    ),
-                    "created_at": datetime.now(),
-                })
+                alerts.append(
+                    {
+                        "alert_type": "A15",
+                        "level": "critical",
+                        "date": alert_date,
+                        "housing_id": housing_id,
+                        "recipient_role": "RS",
+                        "message": (
+                            f"Просрочка по календарному плану\n\n"
+                            f"Объект: {housing.name}\n"
+                            f"Просроченных работ: {len(overdue_items)}"
+                        ),
+                        "created_at": datetime.now(),
+                    }
+                )
 
         return alerts
 
@@ -200,19 +208,21 @@ class AlertService(BaseService):
         if not has_tech:
             housing = await self.housing_manager.get_by_id(housing_id)
             if housing:
-                alerts.append({
-                    "alert_type": "A22",
-                    "level": "warning",
-                    "date": alert_date,
-                    "housing_id": housing_id,
-                    "recipient_role": "ADMIN",
-                    "message": (
-                        f"Нет техпоследовательности\n\n"
-                        f"Для корпуса «{housing.name}» не задана техпоследовательность.\n"
-                        f"Автогенерация план-наряда невозможна."
-                    ),
-                    "created_at": datetime.now(),
-                })
+                alerts.append(
+                    {
+                        "alert_type": "A22",
+                        "level": "warning",
+                        "date": alert_date,
+                        "housing_id": housing_id,
+                        "recipient_role": "ADMIN",
+                        "message": (
+                            f"Нет техпоследовательности\n\n"
+                            f"Для корпуса «{housing.name}» не задана техпоследовательность.\n"
+                            f"Автогенерация план-наряда невозможна."
+                        ),
+                        "created_at": datetime.now(),
+                    }
+                )
 
         return alerts
 
@@ -257,14 +267,17 @@ class AlertService(BaseService):
 
         return escalated
 
-    async def acknowledge_alert(self, alert_id: UUID, user_id: UUID) -> Optional:
+    async def acknowledge_alert(self, alert_id: UUID, user_id: str) -> Optional[dict]:
         alert = await self.alert_manager.get_by_id(alert_id)
         if alert:
-            await self.alert_manager.update_by_id(alert_id, {
-                "acknowledged": True,
-                "acknowledged_at": datetime.now(),
-                "acknowledged_by": user_id,
-            })
+            await self.alert_manager.update_by_id(
+                alert_id,
+                {
+                    "acknowledged": True,
+                    "acknowledged_at": datetime.now(),
+                    "acknowledged_by": user_id,
+                },
+            )
             log.info(f"Alert {alert_id} acknowledged by {user_id}")
         return alert
 

@@ -9,7 +9,7 @@ from src.models.dbo.tables.workforce import WfProject, WfProjectObject
 from src.services.sync.service import SyncService
 
 
-class WfProjectAdmin(BaseAdmin, model=WfProject):
+class WfProjectAdmin(BaseAdmin, model=WfProject):  # type: ignore[call-arg]
     category = CATEGORY_WORKFORCE
     name = "Проект"
     name_plural = "Проекты"
@@ -72,7 +72,7 @@ class WfProjectAdmin(BaseAdmin, model=WfProject):
         )
 
 
-class WfProjectObjectAdmin(BaseAdmin, model=WfProjectObject):
+class WfProjectObjectAdmin(BaseAdmin, model=WfProjectObject):  # type: ignore[call-arg]
     category = CATEGORY_WORKFORCE
     name = "Объект строительства"
     name_plural = "Объекты строительства"

@@ -23,15 +23,6 @@ async def test_list_wf_projects_returns_200(client):
 
 
 @pytest.mark.smoke
-async def test_list_wf_contractors_returns_200(client):
-    response = await client.get("/api/v1/workforce/wf-contractors")
-
-    assert response.status_code == 200
-    body = response.json()
-    assert isinstance(body["data"], list)
-
-
-@pytest.mark.smoke
 async def test_list_violations_returns_200(client):
     response = await client.get("/api/v1/workforce/violations")
 
@@ -50,9 +41,7 @@ async def test_list_norms_returns_200(client):
 
 
 async def test_get_wf_project_not_found_returns_404(client):
-    response = await client.get(
-        "/api/v1/workforce/projects/00000000-0000-0000-0000-000000000000"
-    )
+    response = await client.get("/api/v1/workforce/projects/00000000-0000-0000-0000-000000000000")
 
     assert response.status_code == 404
     assert response.json()["code"] == "404"

@@ -28,6 +28,7 @@ work_router = APIRouter(prefix="/works", tags=["Works"])
 
 # ── WorkGroup ─────────────────────────────────────────────────────────────────
 
+
 @work_router.get("/groups", responses=get_responses(ResponseGroup.ALL_ERRORS))
 @catch_all_exceptions
 async def list_work_groups(
@@ -68,9 +69,7 @@ async def update_work_group(
     body: UpdateWorkGroupRequest,
     service: WorkService = Depends(get_work_service),
 ) -> DataResponseSchema[WorkGroupSchema]:
-    item = await service.work_group_manager.update_by_id(
-        group_id, body.model_dump(exclude_none=True)
-    )
+    item = await service.work_group_manager.update_by_id(group_id, body.model_dump(exclude_none=True))
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Work group not found")
     return DataResponseSchema[WorkGroupSchema](data=WorkGroupSchema.model_validate(item))
@@ -88,6 +87,7 @@ async def delete_work_group(
 
 # ── WorkType ──────────────────────────────────────────────────────────────────
 
+
 @work_router.get("/types", responses=get_responses(ResponseGroup.ALL_ERRORS))
 @catch_all_exceptions
 async def list_work_types(
@@ -97,9 +97,7 @@ async def list_work_types(
 ) -> ListDataResponseSchema[WorkTypeSchema]:
     filter_data = filters.model_dump(exclude_none=True)
     search_text = filter_data.pop("search", None)
-    items = await service.work_type_manager.search(
-        search=search_text, order_by=["name"], **filter_data
-    )
+    items = await service.work_type_manager.search(search=search_text, order_by=["name"], **filter_data)
     total = await service.work_type_manager.count(search=search_text, **filter_data)
     return ListDataResponseSchema[WorkTypeSchema].create(
         list_data=[WorkTypeSchema.model_validate(i) for i in items],
@@ -137,9 +135,7 @@ async def update_work_type(
     body: UpdateWorkTypeRequest,
     service: WorkService = Depends(get_work_service),
 ) -> DataResponseSchema[WorkTypeSchema]:
-    item = await service.work_type_manager.update_by_id(
-        work_type_id, body.model_dump(exclude_none=True)
-    )
+    item = await service.work_type_manager.update_by_id(work_type_id, body.model_dump(exclude_none=True))
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Work type not found")
     return DataResponseSchema[WorkTypeSchema](data=WorkTypeSchema.model_validate(item))
@@ -157,9 +153,8 @@ async def delete_work_type(
 
 # ── TechSequence ──────────────────────────────────────────────────────────────
 
-@work_router.get(
-    "/tech-sequence/{housing_id}", responses=get_responses(ResponseGroup.ALL_ERRORS)
-)
+
+@work_router.get("/tech-sequence/{housing_id}", responses=get_responses(ResponseGroup.ALL_ERRORS))
 @catch_all_exceptions
 async def get_tech_sequence(
     housing_id: UUID,
@@ -169,9 +164,7 @@ async def get_tech_sequence(
     if not housing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Housing not found")
 
-    items = await service.tech_sequence_manager.search(
-        housing_id=housing_id, order_by=["order"]
-    )
+    items = await service.tech_sequence_manager.search(housing_id=housing_id, order_by=["order"])
     return DataResponseSchema[TechSequenceSchema](
         data=TechSequenceSchema(
             housing_id=housing_id,
@@ -181,23 +174,17 @@ async def get_tech_sequence(
     )
 
 
-@work_router.post(
-    "/tech-sequence", responses=get_responses(ResponseGroup.ALL_ERRORS), status_code=201
-)
+@work_router.post("/tech-sequence", responses=get_responses(ResponseGroup.ALL_ERRORS), status_code=201)
 @catch_all_exceptions
 async def create_tech_sequence_item(
     body: CreateTechSequenceItemRequest,
     service: WorkService = Depends(get_work_service),
 ) -> DataResponseSchema[TechSequenceItemSchema]:
     item = await service.tech_sequence_manager.create(body.model_dump())
-    return DataResponseSchema[TechSequenceItemSchema](
-        data=TechSequenceItemSchema.model_validate(item)
-    )
+    return DataResponseSchema[TechSequenceItemSchema](data=TechSequenceItemSchema.model_validate(item))
 
 
-@work_router.delete(
-    "/tech-sequence/{item_id}", responses=get_responses(ResponseGroup.ALL_ERRORS)
-)
+@work_router.delete("/tech-sequence/{item_id}", responses=get_responses(ResponseGroup.ALL_ERRORS))
 @catch_all_exceptions
 async def delete_tech_sequence_item(
     item_id: UUID,

@@ -109,9 +109,8 @@ class WorkforceService(BaseService):
         period_month: date,
         object_id: Optional[UUID] = None,
     ) -> Dict[str, int]:
-        q = (
-            select(WfHeadcountPlan.work_type, WfHeadcountPlan.planned_count)
-            .where(WfHeadcountPlan.project_id == project_id, WfHeadcountPlan.period_month == period_month)
+        q = select(WfHeadcountPlan.work_type, WfHeadcountPlan.planned_count).where(
+            WfHeadcountPlan.project_id == project_id, WfHeadcountPlan.period_month == period_month
         )
         if object_id is not None:
             q = q.where(WfHeadcountPlan.object_id == object_id)
@@ -140,8 +139,10 @@ class WorkforceService(BaseService):
 
             norm = norms.get(work_type)
             norm_day = norm.median_day_bdr if norm else None
-            norm_month = float(norm.median_month_bdr) if norm and norm.median_month_bdr else (
-                float(norm_day) * 22 if norm_day else None
+            norm_month = (
+                float(norm.median_month_bdr)
+                if norm and norm.median_month_bdr
+                else (float(norm_day) * 22 if norm_day else None)
             )
             required = float(net_bdr) / norm_month if norm_month and norm_month > 0 else None
 
@@ -152,23 +153,25 @@ class WorkforceService(BaseService):
             coverage = f30 / required * 100 if required and required > 0 else None
             cov_report = f30 / plan * 100 if plan and plan > 0 else None
 
-            rows.append(WorkTypeRow(
-                work_type=work_type,
-                bdr_amount=bdr,
-                management_completion_amount=mgmt_completion,
-                uv_pct=round(uv_pct, 1),
-                net_bdr=net_bdr,
-                norm_day=norm_day,
-                required_headcount=round(required, 1) if required is not None else None,
-                plan_report=plan,
-                fact_30d=round(f30, 1),
-                fact_7d=round(f7, 1),
-                coverage_pct=round(coverage, 1) if coverage is not None else None,
-                coverage_report_pct=round(cov_report, 1) if cov_report is not None else None,
-                trend=_trend(f7, f30),
-                traffic_light=_traffic_light(coverage),
-                traffic_light_report=_traffic_light(cov_report),
-            ))
+            rows.append(
+                WorkTypeRow(
+                    work_type=work_type,
+                    bdr_amount=bdr,
+                    management_completion_amount=mgmt_completion,
+                    uv_pct=round(uv_pct, 1),
+                    net_bdr=net_bdr,
+                    norm_day=norm_day,
+                    required_headcount=round(required, 1) if required is not None else None,
+                    plan_report=plan,
+                    fact_30d=round(f30, 1),
+                    fact_7d=round(f7, 1),
+                    coverage_pct=round(coverage, 1) if coverage is not None else None,
+                    coverage_report_pct=round(cov_report, 1) if cov_report is not None else None,
+                    trend=_trend(f7, f30),
+                    traffic_light=_traffic_light(coverage),
+                    traffic_light_report=_traffic_light(cov_report),
+                )
+            )
         return rows
 
     async def calc_project_detail(
@@ -224,24 +227,28 @@ class WorkforceService(BaseService):
             top_p = None
             covered = [r for r in wt_rows if r.coverage_pct is not None]
             if covered:
-                worst = min(covered, key=lambda r: r.coverage_pct)
+                worst = min(covered, key=lambda r: r.coverage_pct or 100)
                 if worst.coverage_pct is not None and worst.coverage_pct < 85:
                     top_p = worst.work_type
 
-            obj_dashboard_items.append(ObjectDashboardItem(
-                id=obj.id, name=obj.name,
-                net_bdr=obj_net,
-                required_headcount=round(obj_req, 1) if obj_req else None,
-                plan_report=obj_plan,
-                fact_30d=round(obj_f30, 1), fact_7d=round(obj_f7, 1),
-                coverage_pct=round(obj_cov, 1) if obj_cov else None,
-                coverage_report_pct=round(obj_cov_r, 1) if obj_cov_r else None,
-                trend=_trend(obj_f7, obj_f30),
-                traffic_light=_traffic_light(obj_cov),
-                traffic_light_report=_traffic_light(obj_cov_r),
-                top_problem=top_p,
-                work_types=wt_rows,
-            ))
+            obj_dashboard_items.append(
+                ObjectDashboardItem(
+                    id=obj.id,
+                    name=obj.name,
+                    net_bdr=obj_net,
+                    required_headcount=round(obj_req, 1) if obj_req else None,
+                    plan_report=obj_plan,
+                    fact_30d=round(obj_f30, 1),
+                    fact_7d=round(obj_f7, 1),
+                    coverage_pct=round(obj_cov, 1) if obj_cov else None,
+                    coverage_report_pct=round(obj_cov_r, 1) if obj_cov_r else None,
+                    trend=_trend(obj_f7, obj_f30),
+                    traffic_light=_traffic_light(obj_cov),
+                    traffic_light_report=_traffic_light(obj_cov_r),
+                    top_problem=top_p,
+                    work_types=wt_rows,
+                )
+            )
 
         agg_f30 = await self._get_headcount_avg(project.id, 30)
         agg_f7 = await self._get_headcount_avg(project.id, 7)
@@ -297,26 +304,30 @@ class WorkforceService(BaseService):
             if detail.objects:
                 worst_objs = [o for o in detail.objects if o.coverage_pct is not None]
                 if worst_objs:
-                    wo = min(worst_objs, key=lambda o: o.coverage_pct)
-                    if wo.coverage_pct < 85:
+                    wo = min(worst_objs, key=lambda o: o.coverage_pct or 100)
+                    if wo.coverage_pct and wo.coverage_pct < 85:
                         top_p = f"{wo.name}: {wo.top_problem or '?'}"
             if not top_p and detail.work_types:
                 covered = [r for r in detail.work_types if r.coverage_pct is not None]
                 if covered:
-                    w = min(covered, key=lambda r: r.coverage_pct)
-                    if w.coverage_pct < 85:
+                    w = min(covered, key=lambda r: r.coverage_pct or 100)
+                    if w.coverage_pct and w.coverage_pct < 85:
                         top_p = w.work_type
 
-            rows.append(ProjectRow(
-                id=proj.id, name=proj.name, project_class=proj.project_class,
-                net_bdr=pn,
-                required_headcount=round(pr, 1) if pr else None,
-                fact_30d=round(pf, 1),
-                coverage_pct=round(detail.coverage_pct, 1) if detail.coverage_pct else None,
-                trend=detail.trend or "no_data",
-                top_problem=top_p,
-                traffic_light=detail.traffic_light or "grey",
-            ))
+            rows.append(
+                ProjectRow(
+                    id=proj.id,
+                    name=proj.name,
+                    project_class=proj.project_class,
+                    net_bdr=pn,
+                    required_headcount=round(pr, 1) if pr else None,
+                    fact_30d=round(pf, 1),
+                    coverage_pct=round(detail.coverage_pct, 1) if detail.coverage_pct else None,
+                    trend=detail.trend or "no_data",
+                    top_problem=top_p,
+                    traffic_light=detail.traffic_light or "grey",
+                )
+            )
 
         rows.sort(key=lambda r: r.coverage_pct if r.coverage_pct is not None else 9999)
         port_cov = round(total_f30 / total_req * 100, 1) if has_req and total_req > 0 else None
@@ -390,18 +401,20 @@ class WorkforceService(BaseService):
                 if planned_end:
                     delay_months = round((forecast_date - planned_end).days / 30, 1)
 
-            rows.append(ForecastRow(
-                object_id=obj.id,
-                object_name=obj.name,
-                work_type=item.work_type,
-                remaining_amount=remaining,
-                planned_end_date=planned_end,
-                fact_30d=round(f30, 1),
-                norm_month=round(norm_month, 0) if norm_month else None,
-                months_needed=round(months_needed, 1) if months_needed else None,
-                forecast_date=forecast_date,
-                delay_months=delay_months,
-            ))
+            rows.append(
+                ForecastRow(
+                    object_id=obj.id,
+                    object_name=obj.name,
+                    work_type=item.work_type,
+                    remaining_amount=remaining,
+                    planned_end_date=planned_end,
+                    fact_30d=round(f30, 1),
+                    norm_month=round(norm_month, 0) if norm_month else None,
+                    months_needed=round(months_needed, 1) if months_needed else None,
+                    forecast_date=forecast_date,
+                    delay_months=delay_months,
+                )
+            )
 
         return ForecastResponse(project_id=project_id, rows=rows)
 
@@ -421,9 +434,8 @@ class WorkforceService(BaseService):
         )
         fact_rows = await self.wf_headcount_fact_manager.fetch(fact_q, with_scalars=False)
 
-        plan_q = (
-            select(WfHeadcountPlan.contractor_id, WfHeadcountPlan.work_type, WfHeadcountPlan.planned_count)
-            .where(WfHeadcountPlan.object_id == object_id, WfHeadcountPlan.period_month == period)
+        plan_q = select(WfHeadcountPlan.contractor_id, WfHeadcountPlan.work_type, WfHeadcountPlan.planned_count).where(
+            WfHeadcountPlan.object_id == object_id, WfHeadcountPlan.period_month == period
         )
         plan_rows = await self.wf_headcount_plan_manager.fetch(plan_q, with_scalars=False)
         plan_map = {(r.contractor_id, r.work_type): r.planned_count for r in plan_rows}
@@ -440,14 +452,16 @@ class WorkforceService(BaseService):
             plan = plan_map.get((r.contractor_id, r.work_type))
             cov = round(f30 / plan * 100, 1) if plan and plan > 0 else None
             cname = contractors.get(r.contractor_id, "Без подрядчика") if r.contractor_id else "Без подрядчика"
-            result.append(ContractorHeadcountRow(
-                contractor_id=r.contractor_id,
-                contractor_name=cname,
-                work_type=r.work_type,
-                plan=plan,
-                fact_30d=round(f30, 1),
-                coverage_pct=cov,
-            ))
+            result.append(
+                ContractorHeadcountRow(
+                    contractor_id=r.contractor_id,
+                    contractor_name=cname,
+                    work_type=r.work_type,
+                    plan=plan,
+                    fact_30d=round(f30, 1),
+                    coverage_pct=cov,
+                )
+            )
         return result
 
     async def calc_system_problems(
@@ -514,12 +528,14 @@ class WorkforceService(BaseService):
             below = [(oid, cov) for oid, cov in entries if cov < threshold_pct]
             if len(below) >= min_objects:
                 avg_cov = round(sum(c for _, c in below) / len(below), 1)
-                problems.append(SystemProblemRow(
-                    work_type=wt,
-                    affected_objects=len(below),
-                    avg_coverage_pct=avg_cov,
-                    object_names=[obj_names.get(oid, str(oid)) for oid, _ in below],
-                ))
+                problems.append(
+                    SystemProblemRow(
+                        work_type=wt,
+                        affected_objects=len(below),
+                        avg_coverage_pct=avg_cov,
+                        object_names=[obj_names.get(oid, str(oid)) for oid, _ in below],
+                    )
+                )
 
         problems.sort(key=lambda r: r.avg_coverage_pct or 9999)
         return SystemProblemsResponse(threshold_pct=threshold_pct, min_objects=min_objects, problems=problems)
@@ -535,20 +551,20 @@ class WorkforceService(BaseService):
                 WfHeadcountFact.contractor_id == c.id,
                 WfHeadcountFact.fact_date >= since_3m,
             )
-            fact_avg = await self.wf_headcount_fact_manager.fetch_val(fact_avg_q)
+            fact_avg: Optional[float] = await self.wf_headcount_fact_manager.fetch_val(fact_avg_q)
 
             plan_sum_q = select(func.sum(WfHeadcountPlan.planned_count)).where(
                 WfHeadcountPlan.contractor_id == c.id,
                 WfHeadcountPlan.period_month >= since_3m.replace(day=1),
             )
-            plan_sum = await self.wf_headcount_plan_manager.fetch_val(plan_sum_q)
+            plan_sum: Optional[int] = await self.wf_headcount_plan_manager.fetch_val(plan_sum_q)
 
-            avg_cov = None
+            avg_cov: Optional[float] = None
             if fact_avg is not None and plan_sum:
                 avg_cov = round(float(fact_avg) / (float(plan_sum) / 3) * 100, 1)
 
             v_count_q = select(func.count(WfViolation.id)).where(WfViolation.contractor_id == c.id)
-            v_count = await self.wf_violation_manager.fetch_val(v_count_q) or 0
+            v_count: int = await self.wf_violation_manager.fetch_val(v_count_q) or 0
 
             missed_q = (
                 select(func.count(WfMobilizationCheckpoint.id))
@@ -562,17 +578,19 @@ class WorkforceService(BaseService):
                     WfMobilizationCheckpoint.status == CheckpointStatus.MISSED,
                 )
             )
-            missed = await self.wf_mobilization_checkpoint_manager.fetch_val(missed_q) or 0
+            missed: int = await self.wf_mobilization_checkpoint_manager.fetch_val(missed_q) or 0
 
             rating = round((avg_cov or 0.0) * 0.5 - v_count * 10 - missed * 5, 1)
-            rows.append(ContractorRatingRow(
-                contractor_id=c.id,
-                contractor_name=c.name,
-                avg_coverage_pct=avg_cov,
-                violation_count=v_count,
-                missed_checkpoints=missed,
-                rating_score=rating,
-            ))
+            rows.append(
+                ContractorRatingRow(
+                    contractor_id=c.id,
+                    contractor_name=c.name,
+                    avg_coverage_pct=avg_cov,
+                    violation_count=v_count,
+                    missed_checkpoints=missed,
+                    rating_score=rating,
+                )
+            )
 
         rows.sort(key=lambda r: r.rating_score, reverse=True)
         return rows
@@ -611,16 +629,23 @@ class WorkforceService(BaseService):
                 if mp:
                     ci = await self.wf_challenge_item_manager.get_by_id(mp.challenge_item_id)
                     if ci:
-                        violations_data.append({
-                            "project_id": challenge.project_id,
-                            "object_id": challenge.object_id,
-                            "work_type": ci.work_type,
-                            "violation_date": today,
-                            "violation_type": ViolationType.MOBILIZATION_MISSED,
-                            "description": f"Пропущена КТ мобилизации: ожидалось {cp.expected_cumulative}, факт {cp.actual_cumulative or 0}",
-                            "plan_count": cp.expected_cumulative,
-                            "fact_count": cp.actual_cumulative or 0,
-                        })
+                        desc = (
+                            f"Пропущена КТ мобилизации: ожидалось "
+                            f"{cp.expected_cumulative}, факт "
+                            f"{cp.actual_cumulative or 0}"
+                        )
+                        violations_data.append(
+                            {
+                                "project_id": challenge.project_id,
+                                "object_id": challenge.object_id,
+                                "work_type": ci.work_type,
+                                "violation_date": today,
+                                "violation_type": ViolationType.MOBILIZATION_MISSED,
+                                "description": desc,
+                                "plan_count": cp.expected_cumulative,
+                                "fact_count": cp.actual_cumulative or 0,
+                            }
+                        )
             updated += 1
 
         if violations_data:
@@ -637,8 +662,8 @@ class WorkforceService(BaseService):
 
         for proj in projects:
             detail = await self.calc_project_detail(proj)
-            for obj in (detail.objects or []):
-                for wt in (obj.work_types or []):
+            for obj in detail.objects or []:
+                for wt in obj.work_types or []:
                     if wt.coverage_pct is not None and wt.coverage_pct < 60 and wt.required_headcount:
                         existing = await self.wf_violation_manager.search(
                             object_id=obj.id,
@@ -648,16 +673,23 @@ class WorkforceService(BaseService):
                             resolved=False,
                         )
                         if not existing:
-                            new_violations_data.append({
-                                "project_id": proj.id,
-                                "object_id": obj.id,
-                                "work_type": wt.work_type,
-                                "violation_date": today,
-                                "violation_type": "coverage_critical",
-                                "description": f"Обеспеченность {wt.coverage_pct:.0f}% (< 60%). Нужно {wt.required_headcount:.0f}, факт {wt.fact_30d:.0f}",
-                                "plan_count": int(wt.required_headcount),
-                                "fact_count": int(wt.fact_30d),
-                            })
+                            desc = (
+                                f"Обеспеченность {wt.coverage_pct:.0f}% "
+                                f"(< 60%). Нужно {wt.required_headcount:.0f}, "
+                                f"факт {wt.fact_30d:.0f}"
+                            )
+                            new_violations_data.append(
+                                {
+                                    "project_id": proj.id,
+                                    "object_id": obj.id,
+                                    "work_type": wt.work_type,
+                                    "violation_date": today,
+                                    "violation_type": "coverage_critical",
+                                    "description": desc,
+                                    "plan_count": int(wt.required_headcount),
+                                    "fact_count": int(wt.fact_30d),
+                                }
+                            )
 
                     if wt.plan_report and wt.fact_30d < wt.plan_report * 0.8:
                         existing = await self.wf_violation_manager.search(
@@ -668,16 +700,20 @@ class WorkforceService(BaseService):
                             resolved=False,
                         )
                         if not existing:
-                            new_violations_data.append({
-                                "project_id": proj.id,
-                                "object_id": obj.id,
-                                "work_type": wt.work_type,
-                                "violation_date": today,
-                                "violation_type": "plan_not_met",
-                                "description": f"Факт {wt.fact_30d:.0f} < План {wt.plan_report} (невыполнение > 20%)",
-                                "plan_count": wt.plan_report,
-                                "fact_count": int(wt.fact_30d),
-                            })
+                            new_violations_data.append(
+                                {
+                                    "project_id": proj.id,
+                                    "object_id": obj.id,
+                                    "work_type": wt.work_type,
+                                    "violation_date": today,
+                                    "violation_type": "plan_not_met",
+                                    "description": (
+                                        f"Факт {wt.fact_30d:.0f} < План {wt.plan_report} (невыполнение > 20%)"
+                                    ),
+                                    "plan_count": wt.plan_report,
+                                    "fact_count": int(wt.fact_30d),
+                                }
+                            )
 
         if new_violations_data:
             await self.wf_violation_manager.bulk_insert(new_violations_data, is_commit=True)
@@ -724,16 +760,26 @@ class WorkforceService(BaseService):
                 c = await self.contractor_manager.get_by_id(v.contractor_id)
                 contr_cache[v.contractor_id] = c.name if c else None
 
-            result.append(ViolationOut(
-                id=v.id, project_id=v.project_id, object_id=v.object_id,
-                work_type=v.work_type, contractor_id=v.contractor_id,
-                violation_date=v.violation_date, violation_type=v.violation_type,
-                description=v.description, plan_count=v.plan_count, fact_count=v.fact_count,
-                escalated=v.escalated, escalated_to=v.escalated_to, resolved=v.resolved,
-                project_name=proj_cache.get(v.project_id),
-                object_name=obj_cache.get(v.object_id),
-                contractor_name=contr_cache.get(v.contractor_id) if v.contractor_id else None,
-            ))
+            result.append(
+                ViolationOut(
+                    id=v.id,
+                    project_id=v.project_id,
+                    object_id=v.object_id,
+                    work_type=v.work_type,
+                    contractor_id=v.contractor_id,
+                    violation_date=v.violation_date,
+                    violation_type=v.violation_type,
+                    description=v.description,
+                    plan_count=v.plan_count,
+                    fact_count=v.fact_count,
+                    escalated=v.escalated,
+                    escalated_to=v.escalated_to,
+                    resolved=v.resolved,
+                    project_name=proj_cache.get(v.project_id),
+                    object_name=obj_cache.get(v.object_id),
+                    contractor_name=contr_cache.get(v.contractor_id) if v.contractor_id else None,
+                )
+            )
         return result
 
 

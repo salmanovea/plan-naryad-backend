@@ -3,7 +3,7 @@ from src.config.admin.model_admin.base_admin import BaseAdmin
 from src.models.dbo.tables.contractor import Contractor, ContractorAssignment
 
 
-class ContractorAdmin(BaseAdmin, model=Contractor):
+class ContractorAdmin(BaseAdmin, model=Contractor):  # type: ignore[call-arg]
     category = CATEGORY_CONTRACTORS
     name = "Подрядчик"
     name_plural = "Подрядчики"
@@ -48,7 +48,7 @@ class ContractorAdmin(BaseAdmin, model=Contractor):
     column_sortable_list = [Contractor.name, Contractor.short_name]
 
 
-class ContractorAssignmentAdmin(BaseAdmin, model=ContractorAssignment):
+class ContractorAssignmentAdmin(BaseAdmin, model=ContractorAssignment):  # type: ignore[call-arg]
     category = CATEGORY_CONTRACTORS
     name = "Назначение подрядчика"
     name_plural = "Назначения подрядчиков"

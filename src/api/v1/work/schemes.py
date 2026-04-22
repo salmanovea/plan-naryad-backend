@@ -56,7 +56,6 @@ class WorkTypeSchema(IDMixinSchema):
     code: str
     unit: str
     description: Optional[str] = None
-    group: Optional[WorkGroupSchema] = None
 
 
 class CreateTechSequenceItemRequest(BaseModel):

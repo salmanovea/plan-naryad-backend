@@ -26,7 +26,7 @@ class DashboardService(BaseService):
         date_to: date,
         housing_id: Optional[UUID] = None,
     ) -> dict:
-        base_filters = {"date__gte": date_from, "date__lte": date_to}
+        base_filters: dict = {"date__gte": date_from, "date__lte": date_to}
         if housing_id:
             base_filters["housing_id"] = housing_id
 
@@ -41,12 +41,12 @@ class DashboardService(BaseService):
         completion_rate: Optional[Decimal] = None
         submission_rate: Optional[Decimal] = None
         if summaries:
-            completion_rate = Decimal(
-                sum(float(s.completion_rate) for s in summaries) / len(summaries)
-            ).quantize(Decimal("0.01"))
-            submission_rate = Decimal(
-                sum(float(s.submission_rate) for s in summaries) / len(summaries)
-            ).quantize(Decimal("0.01"))
+            completion_rate = Decimal(sum(float(s.completion_rate) for s in summaries) / len(summaries)).quantize(
+                Decimal("0.01")
+            )
+            submission_rate = Decimal(sum(float(s.submission_rate) for s in summaries) / len(summaries)).quantize(
+                Decimal("0.01")
+            )
 
         housing_name: Optional[str] = None
         if housing_id:

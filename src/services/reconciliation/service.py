@@ -58,8 +58,9 @@ class ReconciliationService(BaseService):
             return None
         if plan_work_id and fact_work_id and plan_work_id != fact_work_id:
             return ReconciliationPattern.WRONG_WORK_TYPE
-        if (plan_section_id and fact_section_id and plan_section_id != fact_section_id) or \
-           (plan_floor_id and fact_floor_id and plan_floor_id != fact_floor_id):
+        if (plan_section_id and fact_section_id and plan_section_id != fact_section_id) or (
+            plan_floor_id and fact_floor_id and plan_floor_id != fact_floor_id
+        ):
             return ReconciliationPattern.WRONG_LOCATION
         return None
 
@@ -71,42 +72,40 @@ class ReconciliationService(BaseService):
         plans = await self.plan_item_manager.search(date=target_date, housing_id=housing_id)
         facts = await self.work_fact_manager.search(date=target_date, housing_id=housing_id)
 
-        plans_dict = {
-            (p.contractor_id, p.section_id, p.floor_id, p.work_type_id): p
-            for p in plans
-        }
-        facts_dict = {
-            (f.contractor_id, f.section_id, f.floor_id, f.work_type_id): f
-            for f in facts
-        }
+        plans_dict = {(p.contractor_id, p.section_id, p.floor_id, p.work_type_id): p for p in plans}
+        facts_dict = {(f.contractor_id, f.section_id, f.floor_id, f.work_type_id): f for f in facts}
 
         matches = []
         for key, plan in plans_dict.items():
             fact = facts_dict.pop(key, None)
-            matches.append({
-                "contractor_id": plan.contractor_id,
-                "section_id": plan.section_id,
-                "floor_id": plan.floor_id,
-                "work_type_id": plan.work_type_id,
-                "housing_id": plan.housing_id,
-                "plan": plan,
-                "fact": fact,
-                "has_plan": True,
-                "has_fact": fact is not None,
-            })
+            matches.append(
+                {
+                    "contractor_id": plan.contractor_id,
+                    "section_id": plan.section_id,
+                    "floor_id": plan.floor_id,
+                    "work_type_id": plan.work_type_id,
+                    "housing_id": plan.housing_id,
+                    "plan": plan,
+                    "fact": fact,
+                    "has_plan": True,
+                    "has_fact": fact is not None,
+                }
+            )
 
         for key, fact in facts_dict.items():
-            matches.append({
-                "contractor_id": fact.contractor_id,
-                "section_id": fact.section_id,
-                "floor_id": fact.floor_id,
-                "work_type_id": fact.work_type_id,
-                "housing_id": fact.housing_id,
-                "plan": None,
-                "fact": fact,
-                "has_plan": False,
-                "has_fact": True,
-            })
+            matches.append(
+                {
+                    "contractor_id": fact.contractor_id,
+                    "section_id": fact.section_id,
+                    "floor_id": fact.floor_id,
+                    "work_type_id": fact.work_type_id,
+                    "housing_id": fact.housing_id,
+                    "plan": None,
+                    "fact": fact,
+                    "has_plan": False,
+                    "has_fact": True,
+                }
+            )
 
         return matches
 
@@ -134,7 +133,16 @@ class ReconciliationService(BaseService):
 
             cid = str(r["contractor_id"])
             if cid not in contractors_stats:
-                contractors_stats[cid] = {k: 0 for k in ("total", "done_full", "done_partial", "done_over", "not_done", "no_report", "unplanned")}
+                status_keys = (
+                    "total",
+                    "done_full",
+                    "done_partial",
+                    "done_over",
+                    "not_done",
+                    "no_report",
+                    "unplanned",
+                )
+                contractors_stats[cid] = {k: 0 for k in status_keys}
             contractors_stats[cid]["total"] += 1
             status_key = status.value.lower() if hasattr(status, "value") else str(status).lower()
             if status_key in contractors_stats[cid]:
@@ -145,8 +153,12 @@ class ReconciliationService(BaseService):
         no_report = counts.get(ReconciliationStatus.NO_REPORT, 0)
 
         completion_rate = Decimal((done_full + done_over) / total_planned * 100) if total_planned > 0 else Decimal("0")
-        weighted_completion = Decimal(total_actual_volume / total_planned_volume * 100) if total_planned_volume > 0 else Decimal("0")
-        submission_rate = Decimal((total_planned - no_report) / total_planned * 100) if total_planned > 0 else Decimal("0")
+        weighted_completion = (
+            Decimal(total_actual_volume / total_planned_volume * 100) if total_planned_volume > 0 else Decimal("0")
+        )
+        submission_rate = (
+            Decimal((total_planned - no_report) / total_planned * 100) if total_planned > 0 else Decimal("0")
+        )
 
         return {
             "date": target_date,

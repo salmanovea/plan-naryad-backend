@@ -3,7 +3,7 @@ from src.config.admin.model_admin.base_admin import BaseAdmin
 from src.models.dbo.tables.housing import Floor, Housing, Section
 
 
-class HousingAdmin(BaseAdmin, model=Housing):
+class HousingAdmin(BaseAdmin, model=Housing):  # type: ignore[call-arg]
     category = CATEGORY_PROJECT_STRUCTURE
     name = "Корпус"
     name_plural = "Корпуса"
@@ -35,7 +35,7 @@ class HousingAdmin(BaseAdmin, model=Housing):
     column_sortable_list = [Housing.name, Housing.complex_name]
 
 
-class SectionAdmin(BaseAdmin, model=Section):
+class SectionAdmin(BaseAdmin, model=Section):  # type: ignore[call-arg]
     category = CATEGORY_PROJECT_STRUCTURE
     name = "Секция"
     name_plural = "Секции"
@@ -67,7 +67,7 @@ class SectionAdmin(BaseAdmin, model=Section):
     column_sortable_list = [Section.section_number, Section.name]
 
 
-class FloorAdmin(BaseAdmin, model=Floor):
+class FloorAdmin(BaseAdmin, model=Floor):  # type: ignore[call-arg]
     category = CATEGORY_PROJECT_STRUCTURE
     name = "Этаж"
     name_plural = "Этажи"

@@ -97,9 +97,7 @@ class SyncService(BaseService):
             queues = await _fetch_all(client, "list_project_queues", project_id=UUID(rp_id))
             for queue in queues:
                 queue_id = UUID(str(queue["id"]))
-                construction_objects = await _fetch_all(
-                    client, "list_queue_construction_objects", queue_id=queue_id
-                )
+                construction_objects = await _fetch_all(client, "list_queue_construction_objects", queue_id=queue_id)
                 for co in construction_objects:
                     co_id = str(co["id"])
                     co_data = {
@@ -156,9 +154,7 @@ class SyncService(BaseService):
         co_uuid: UUID,
         counts: dict[str, int],
     ) -> None:
-        sections = await _fetch_all(
-            client, "list_housing_sections", housing_id=UUID(housing_raport_id)
-        )
+        sections = await _fetch_all(client, "list_housing_sections", housing_id=UUID(housing_raport_id))
         for s in sections:
             s_id = str(s["id"])
             section_data = {
@@ -228,9 +224,7 @@ class SyncService(BaseService):
                 continue
             local_wg_id = local_wg[0].id
 
-            work_types = await _fetch_all(
-                client, "list_work_group_work_types", work_group_id=UUID(wg_id)
-            )
+            work_types = await _fetch_all(client, "list_work_group_work_types", work_group_id=UUID(wg_id))
             wt_rows = []
             for wt in work_types:
                 wt_rows.append(

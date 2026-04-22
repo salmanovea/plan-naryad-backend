@@ -30,6 +30,7 @@ from src.services.workforce.schemas import (  # noqa: F401
 
 # ── WfProject ─────────────────────────────────────────────────────────────────
 
+
 class CreateWfProjectRequest(BaseModel):
     name: str
     project_class: ProjectClass = ProjectClass.COMFORT
@@ -43,6 +44,7 @@ class UpdateWfProjectRequest(BaseModel):
 
 
 # ── WfProjectObject ───────────────────────────────────────────────────────────
+
 
 class CreateWfProjectObjectRequest(BaseModel):
     name: str
@@ -61,6 +63,7 @@ class WfProjectObjectSchema(IDMixinSchema):
 
 
 # ── WorkforceNorm ─────────────────────────────────────────────────────────────
+
 
 class CreateWfWorkforceNormRequest(BaseModel):
     work_type: str
@@ -86,6 +89,7 @@ class WfWorkforceNormSchema(IDMixinSchema):
 
 # ── HeadcountFact ─────────────────────────────────────────────────────────────
 
+
 class CreateWfHeadcountFactRequest(BaseModel):
     project_id: UUID
     object_id: Optional[UUID] = None
@@ -110,6 +114,7 @@ class WfHeadcountFactSchema(IDMixinSchema):
 
 # ── HeadcountPlan ─────────────────────────────────────────────────────────────
 
+
 class CreateWfHeadcountPlanRequest(BaseModel):
     project_id: UUID
     object_id: Optional[UUID] = None
@@ -131,6 +136,7 @@ class WfHeadcountPlanSchema(IDMixinSchema):
 
 
 # ── Challenge ─────────────────────────────────────────────────────────────────
+
 
 class CreateChallengeItemRequest(BaseModel):
     work_type: str
@@ -179,6 +185,7 @@ class ChallengeSchema(IDMixinSchema):
 
 # ── Violation ─────────────────────────────────────────────────────────────────
 
+
 class CreateViolationRequest(BaseModel):
     project_id: UUID
     object_id: UUID
@@ -198,6 +205,7 @@ class UpdateViolationRequest(BaseModel):
 
 
 # ── ArticleMapping ────────────────────────────────────────────────────────────
+
 
 class CreateArticleMappingRequest(BaseModel):
     article_code: str
@@ -224,6 +232,7 @@ class UnmappedArticleSchema(BaseModel):
 
 
 # ── Filters ───────────────────────────────────────────────────────────────────
+
 
 class WfProjectFilters(BaseModel):
     search: Optional[str] = Query(None, description="Search in project name")

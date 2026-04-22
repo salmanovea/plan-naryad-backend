@@ -93,6 +93,4 @@ async def run_escalation_check(
     service: AlertService = Depends(get_alert_service),
 ) -> DataResponseSchema[EscalationCheckResponse]:
     count = await service.run_escalation_check()
-    return DataResponseSchema[EscalationCheckResponse](
-        data=EscalationCheckResponse(escalated_count=count)
-    )
+    return DataResponseSchema[EscalationCheckResponse](data=EscalationCheckResponse(escalated_count=count))

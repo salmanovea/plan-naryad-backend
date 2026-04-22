@@ -1,6 +1,6 @@
 from datetime import date, datetime
 from enum import Enum
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
 from uuid import UUID
 
 from sqlalchemy import ARRAY, Boolean, Date, DateTime, ForeignKey, Integer, String, Text, func
@@ -8,6 +8,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.dbo.mixins import IDMixin
 from src.models.dbo.base_model import Base
+
+if TYPE_CHECKING:
+    from src.models.dbo.tables.contractor import Contractor
+    from src.models.dbo.tables.housing import Housing
 
 
 class AlertType(str, Enum):
@@ -63,7 +67,7 @@ class Alert(IDMixin, Base):
     )
     rs_user_id: Mapped[Optional[str]] = mapped_column(String(255))
 
-    recipient_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    recipient_id: Mapped[Optional[str]] = mapped_column(String(255))
     recipient_role: Mapped[str] = mapped_column(String(20), nullable=False)
 
     message: Mapped[str] = mapped_column(Text, nullable=False)

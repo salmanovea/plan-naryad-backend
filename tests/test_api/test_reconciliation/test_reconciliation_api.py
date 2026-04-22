@@ -24,9 +24,7 @@ async def test_list_daily_summaries_returns_200(client):
 
 
 async def test_get_reconciliation_result_not_found_returns_404(client):
-    response = await client.get(
-        "/api/v1/reconciliation/results/00000000-0000-0000-0000-000000000000"
-    )
+    response = await client.get("/api/v1/reconciliation/results/00000000-0000-0000-0000-000000000000")
 
     assert response.status_code == 404
     assert response.json()["code"] == "404"

@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
 from uuid import UUID
 
 from sqlalchemy import ARRAY, ForeignKey, String
@@ -6,6 +6,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.dbo.mixins import IDMixin, RaportMixin
 from src.models.dbo.base_model import Base
+
+if TYPE_CHECKING:
+    from src.models.dbo.tables.housing import Housing, Section
+    from src.models.dbo.tables.work import WorkGroup
 
 
 class Contractor(IDMixin, RaportMixin, Base):

@@ -38,9 +38,7 @@ async def list_housings(
 ) -> ListDataResponseSchema[HousingSchema]:
     filter_data = filters.model_dump(exclude_none=True)
     search_text = filter_data.pop("search", None)
-    items = await service.housing_manager.search(
-        search=search_text, order_by=["name"], **filter_data
-    )
+    items = await service.housing_manager.search(search=search_text, order_by=["name"], **filter_data)
     total = await service.housing_manager.count(search=search_text, **filter_data)
     return ListDataResponseSchema[HousingSchema].create(
         list_data=[HousingSchema.model_validate(i) for i in items],
@@ -71,19 +69,17 @@ async def get_housing_structure(
     if not housing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Housing not found")
 
-    sections = await service.section_manager.search(
-        housing_id=housing_id, order_by=["section_number"]
-    )
+    sections = await service.section_manager.search(housing_id=housing_id, order_by=["section_number"])
     section_list = []
     for section in sections:
-        floors = await service.floor_manager.search(
-            section_id=section.id, order_by=["floor_number"]
+        floors = await service.floor_manager.search(section_id=section.id, order_by=["floor_number"])
+        section_list.append(
+            SectionInStructure(
+                section_id=section.id,
+                section_name=section.name,
+                floors=[FloorInStructure(floor_id=f.id, floor_number=f.floor_number) for f in floors],
+            )
         )
-        section_list.append(SectionInStructure(
-            section_id=section.id,
-            section_name=section.name,
-            floors=[FloorInStructure(floor_id=f.id, floor_number=f.floor_number) for f in floors],
-        ))
 
     return DataResponseSchema[HousingStructureSchema](
         data=HousingStructureSchema(
@@ -112,9 +108,7 @@ async def update_housing(
     body: UpdateHousingRequest,
     service: HousingService = Depends(get_housing_service),
 ) -> DataResponseSchema[HousingSchema]:
-    item = await service.housing_manager.update_by_id(
-        housing_id, body.model_dump(exclude_none=True)
-    )
+    item = await service.housing_manager.update_by_id(housing_id, body.model_dump(exclude_none=True))
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Housing not found")
     return DataResponseSchema[HousingSchema](data=HousingSchema.model_validate(item))
@@ -132,23 +126,20 @@ async def delete_housing(
 
 # ── Sections ──────────────────────────────────────────────────────────────────
 
+
 @housing_router.get("/{housing_id}/sections", responses=get_responses(ResponseGroup.ALL_ERRORS))
 @catch_all_exceptions
 async def list_sections(
     housing_id: UUID,
     service: HousingService = Depends(get_housing_service),
 ) -> ListDataResponseSchema[SectionSchema]:
-    items = await service.section_manager.search(
-        housing_id=housing_id, order_by=["section_number"]
-    )
+    items = await service.section_manager.search(housing_id=housing_id, order_by=["section_number"])
     return ListDataResponseSchema[SectionSchema].create(
         list_data=[SectionSchema.model_validate(i) for i in items],
     )
 
 
-@housing_router.post(
-    "/{housing_id}/sections", responses=get_responses(ResponseGroup.ALL_ERRORS), status_code=201
-)
+@housing_router.post("/{housing_id}/sections", responses=get_responses(ResponseGroup.ALL_ERRORS), status_code=201)
 @catch_all_exceptions
 async def create_section(
     housing_id: UUID,
@@ -168,9 +159,7 @@ async def update_section(
     body: UpdateSectionRequest,
     service: HousingService = Depends(get_housing_service),
 ) -> DataResponseSchema[SectionSchema]:
-    item = await service.section_manager.update_by_id(
-        section_id, body.model_dump(exclude_none=True)
-    )
+    item = await service.section_manager.update_by_id(section_id, body.model_dump(exclude_none=True))
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Section not found")
     return DataResponseSchema[SectionSchema](data=SectionSchema.model_validate(item))
@@ -188,17 +177,14 @@ async def delete_section(
 
 # ── Floors ────────────────────────────────────────────────────────────────────
 
-@housing_router.get(
-    "/sections/{section_id}/floors", responses=get_responses(ResponseGroup.ALL_ERRORS)
-)
+
+@housing_router.get("/sections/{section_id}/floors", responses=get_responses(ResponseGroup.ALL_ERRORS))
 @catch_all_exceptions
 async def list_floors(
     section_id: UUID,
     service: HousingService = Depends(get_housing_service),
 ) -> ListDataResponseSchema[FloorSchema]:
-    items = await service.floor_manager.search(
-        section_id=section_id, order_by=["floor_number"]
-    )
+    items = await service.floor_manager.search(section_id=section_id, order_by=["floor_number"])
     return ListDataResponseSchema[FloorSchema].create(
         list_data=[FloorSchema.model_validate(i) for i in items],
     )
@@ -228,9 +214,7 @@ async def update_floor(
     body: UpdateFloorRequest,
     service: HousingService = Depends(get_housing_service),
 ) -> DataResponseSchema[FloorSchema]:
-    item = await service.floor_manager.update_by_id(
-        floor_id, body.model_dump(exclude_none=True)
-    )
+    item = await service.floor_manager.update_by_id(floor_id, body.model_dump(exclude_none=True))
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Floor not found")
     return DataResponseSchema[FloorSchema](data=FloorSchema.model_validate(item))

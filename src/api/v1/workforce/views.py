@@ -51,6 +51,7 @@ workforce_router = APIRouter(prefix="/workforce", tags=["Workforce"])
 
 # ── Analytics ─────────────────────────────────────────────────────────────────
 
+
 @workforce_router.get("/dashboard", responses=get_responses(ResponseGroup.ALL_ERRORS))
 @catch_all_exceptions
 async def get_workforce_dashboard(
@@ -60,9 +61,7 @@ async def get_workforce_dashboard(
     return DataResponseSchema[DashboardResponse](data=data)
 
 
-@workforce_router.get(
-    "/projects/{project_id}/detail", responses=get_responses(ResponseGroup.ALL_ERRORS)
-)
+@workforce_router.get("/projects/{project_id}/detail", responses=get_responses(ResponseGroup.ALL_ERRORS))
 @catch_all_exceptions
 async def get_project_detail(
     project_id: UUID,
@@ -76,9 +75,7 @@ async def get_project_detail(
     return DataResponseSchema[ProjectDetailResponse](data=data)
 
 
-@workforce_router.get(
-    "/projects/{project_id}/forecast", responses=get_responses(ResponseGroup.ALL_ERRORS)
-)
+@workforce_router.get("/projects/{project_id}/forecast", responses=get_responses(ResponseGroup.ALL_ERRORS))
 @catch_all_exceptions
 async def get_project_forecast(
     project_id: UUID,
@@ -88,21 +85,17 @@ async def get_project_forecast(
     return DataResponseSchema[ForecastResponse](data=data)
 
 
-@workforce_router.get(
-    "/objects/{object_id}/contractors", responses=get_responses(ResponseGroup.ALL_ERRORS)
-)
+@workforce_router.get("/objects/{object_id}/contractors", responses=get_responses(ResponseGroup.ALL_ERRORS))
 @catch_all_exceptions
 async def get_object_contractors(
     object_id: UUID,
     service: WorkforceService = Depends(get_workforce_service),
 ) -> ListDataResponseSchema[ContractorHeadcountRow]:
     items = await service.calc_object_contractors(object_id)
-    return ListDataResponseSchema[ContractorHeadcountRow].create(list_data=items)
+    return ListDataResponseSchema[ContractorHeadcountRow].create(list_data=[item.model_dump() for item in items])
 
 
-@workforce_router.get(
-    "/system-problems", responses=get_responses(ResponseGroup.ALL_ERRORS)
-)
+@workforce_router.get("/system-problems", responses=get_responses(ResponseGroup.ALL_ERRORS))
 @catch_all_exceptions
 async def get_system_problems(
     threshold_pct: float = Query(50.0, description="Coverage threshold (%)"),
@@ -113,18 +106,17 @@ async def get_system_problems(
     return DataResponseSchema[SystemProblemsResponse](data=data)
 
 
-@workforce_router.get(
-    "/contractor-rating", responses=get_responses(ResponseGroup.ALL_ERRORS)
-)
+@workforce_router.get("/contractor-rating", responses=get_responses(ResponseGroup.ALL_ERRORS))
 @catch_all_exceptions
 async def get_contractor_rating(
     service: WorkforceService = Depends(get_workforce_service),
 ) -> ListDataResponseSchema[ContractorRatingRow]:
     items = await service.calc_contractor_rating()
-    return ListDataResponseSchema[ContractorRatingRow].create(list_data=items)
+    return ListDataResponseSchema[ContractorRatingRow].create(list_data=[item.model_dump() for item in items])
 
 
 # ── WfProject ─────────────────────────────────────────────────────────────────
+
 
 @workforce_router.get("/projects", responses=get_responses(ResponseGroup.ALL_ERRORS))
 @catch_all_exceptions
@@ -135,9 +127,7 @@ async def list_projects(
 ) -> ListDataResponseSchema[WfProjectOut]:
     filter_data = filters.model_dump(exclude_none=True)
     search_text = filter_data.pop("search", None)
-    items = await service.wf_project_manager.search(
-        search=search_text, order_by=["name"], **filter_data
-    )
+    items = await service.wf_project_manager.search(search=search_text, order_by=["name"], **filter_data)
     total = await service.wf_project_manager.count(search=search_text, **filter_data)
     return ListDataResponseSchema[WfProjectOut].create(
         list_data=[WfProjectOut.model_validate(i) for i in items],
@@ -158,9 +148,7 @@ async def get_project(
     return DataResponseSchema[WfProjectOut](data=WfProjectOut.model_validate(item))
 
 
-@workforce_router.post(
-    "/projects", responses=get_responses(ResponseGroup.ALL_ERRORS), status_code=201
-)
+@workforce_router.post("/projects", responses=get_responses(ResponseGroup.ALL_ERRORS), status_code=201)
 @catch_all_exceptions
 async def create_project(
     body: CreateWfProjectRequest,
@@ -177,17 +165,13 @@ async def update_project(
     body: UpdateWfProjectRequest,
     service: WorkforceService = Depends(get_workforce_service),
 ) -> DataResponseSchema[WfProjectOut]:
-    item = await service.wf_project_manager.update_by_id(
-        project_id, body.model_dump(exclude_none=True)
-    )
+    item = await service.wf_project_manager.update_by_id(project_id, body.model_dump(exclude_none=True))
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
     return DataResponseSchema[WfProjectOut](data=WfProjectOut.model_validate(item))
 
 
-@workforce_router.delete(
-    "/projects/{project_id}", responses=get_responses(ResponseGroup.ALL_ERRORS)
-)
+@workforce_router.delete("/projects/{project_id}", responses=get_responses(ResponseGroup.ALL_ERRORS))
 @catch_all_exceptions
 async def delete_project(
     project_id: UUID,
@@ -199,9 +183,8 @@ async def delete_project(
 
 # ── WfProjectObject ───────────────────────────────────────────────────────────
 
-@workforce_router.get(
-    "/projects/{project_id}/objects", responses=get_responses(ResponseGroup.ALL_ERRORS)
-)
+
+@workforce_router.get("/projects/{project_id}/objects", responses=get_responses(ResponseGroup.ALL_ERRORS))
 @catch_all_exceptions
 async def list_project_objects(
     project_id: UUID,
@@ -227,14 +210,10 @@ async def create_project_object(
     data = body.model_dump()
     data["project_id"] = project_id
     item = await service.wf_project_object_manager.create(data)
-    return DataResponseSchema[WfProjectObjectSchema](
-        data=WfProjectObjectSchema.model_validate(item)
-    )
+    return DataResponseSchema[WfProjectObjectSchema](data=WfProjectObjectSchema.model_validate(item))
 
 
-@workforce_router.delete(
-    "/objects/{object_id}", responses=get_responses(ResponseGroup.ALL_ERRORS)
-)
+@workforce_router.delete("/objects/{object_id}", responses=get_responses(ResponseGroup.ALL_ERRORS))
 @catch_all_exceptions
 async def delete_project_object(
     object_id: UUID,
@@ -245,6 +224,7 @@ async def delete_project_object(
 
 
 # ── WorkforceNorm ─────────────────────────────────────────────────────────────
+
 
 @workforce_router.get("/norms", responses=get_responses(ResponseGroup.ALL_ERRORS))
 @catch_all_exceptions
@@ -257,18 +237,14 @@ async def list_norms(
     )
 
 
-@workforce_router.post(
-    "/norms", responses=get_responses(ResponseGroup.ALL_ERRORS), status_code=201
-)
+@workforce_router.post("/norms", responses=get_responses(ResponseGroup.ALL_ERRORS), status_code=201)
 @catch_all_exceptions
 async def create_norm(
     body: CreateWfWorkforceNormRequest,
     service: WorkforceService = Depends(get_workforce_service),
 ) -> DataResponseSchema[WfWorkforceNormSchema]:
     item = await service.wf_workforce_norm_manager.create(body.model_dump())
-    return DataResponseSchema[WfWorkforceNormSchema](
-        data=WfWorkforceNormSchema.model_validate(item)
-    )
+    return DataResponseSchema[WfWorkforceNormSchema](data=WfWorkforceNormSchema.model_validate(item))
 
 
 @workforce_router.delete("/norms/{norm_id}", responses=get_responses(ResponseGroup.ALL_ERRORS))
@@ -282,6 +258,7 @@ async def delete_norm(
 
 
 # ── HeadcountFact ─────────────────────────────────────────────────────────────
+
 
 @workforce_router.get("/headcount/facts", responses=get_responses(ResponseGroup.ALL_ERRORS))
 @catch_all_exceptions
@@ -305,21 +282,18 @@ async def list_headcount_facts(
     )
 
 
-@workforce_router.post(
-    "/headcount/facts", responses=get_responses(ResponseGroup.ALL_ERRORS), status_code=201
-)
+@workforce_router.post("/headcount/facts", responses=get_responses(ResponseGroup.ALL_ERRORS), status_code=201)
 @catch_all_exceptions
 async def create_headcount_fact(
     body: CreateWfHeadcountFactRequest,
     service: WorkforceService = Depends(get_workforce_service),
 ) -> DataResponseSchema[WfHeadcountFactSchema]:
     item = await service.wf_headcount_fact_manager.create(body.model_dump())
-    return DataResponseSchema[WfHeadcountFactSchema](
-        data=WfHeadcountFactSchema.model_validate(item)
-    )
+    return DataResponseSchema[WfHeadcountFactSchema](data=WfHeadcountFactSchema.model_validate(item))
 
 
 # ── HeadcountPlan ─────────────────────────────────────────────────────────────
+
 
 @workforce_router.get("/headcount/plans", responses=get_responses(ResponseGroup.ALL_ERRORS))
 @catch_all_exceptions
@@ -339,21 +313,18 @@ async def list_headcount_plans(
     )
 
 
-@workforce_router.post(
-    "/headcount/plans", responses=get_responses(ResponseGroup.ALL_ERRORS), status_code=201
-)
+@workforce_router.post("/headcount/plans", responses=get_responses(ResponseGroup.ALL_ERRORS), status_code=201)
 @catch_all_exceptions
 async def create_headcount_plan(
     body: CreateWfHeadcountPlanRequest,
     service: WorkforceService = Depends(get_workforce_service),
 ) -> DataResponseSchema[WfHeadcountPlanSchema]:
     item = await service.wf_headcount_plan_manager.create(body.model_dump())
-    return DataResponseSchema[WfHeadcountPlanSchema](
-        data=WfHeadcountPlanSchema.model_validate(item)
-    )
+    return DataResponseSchema[WfHeadcountPlanSchema](data=WfHeadcountPlanSchema.model_validate(item))
 
 
 # ── Challenge ─────────────────────────────────────────────────────────────────
+
 
 @workforce_router.get("/challenges", responses=get_responses(ResponseGroup.ALL_ERRORS))
 @catch_all_exceptions
@@ -373,9 +344,7 @@ async def list_challenges(
     )
 
 
-@workforce_router.post(
-    "/challenges", responses=get_responses(ResponseGroup.ALL_ERRORS), status_code=201
-)
+@workforce_router.post("/challenges", responses=get_responses(ResponseGroup.ALL_ERRORS), status_code=201)
 @catch_all_exceptions
 async def create_challenge(
     body: CreateChallengeRequest,
@@ -395,18 +364,14 @@ async def create_challenge(
     return DataResponseSchema[ChallengeSchema](data=ChallengeSchema.model_validate(challenge))
 
 
-@workforce_router.patch(
-    "/challenges/{challenge_id}", responses=get_responses(ResponseGroup.ALL_ERRORS)
-)
+@workforce_router.patch("/challenges/{challenge_id}", responses=get_responses(ResponseGroup.ALL_ERRORS))
 @catch_all_exceptions
 async def update_challenge(
     challenge_id: UUID,
     body: UpdateChallengeRequest,
     service: WorkforceService = Depends(get_workforce_service),
 ) -> DataResponseSchema[ChallengeSchema]:
-    item = await service.wf_challenge_manager.update_by_id(
-        challenge_id, body.model_dump(exclude_none=True)
-    )
+    item = await service.wf_challenge_manager.update_by_id(challenge_id, body.model_dump(exclude_none=True))
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Challenge not found")
     return DataResponseSchema[ChallengeSchema](data=ChallengeSchema.model_validate(item))
@@ -427,6 +392,7 @@ async def check_challenge_checkpoints(
 
 # ── Violations ────────────────────────────────────────────────────────────────
 
+
 @workforce_router.get("/violations", responses=get_responses(ResponseGroup.ALL_ERRORS))
 @catch_all_exceptions
 async def list_violations(
@@ -439,15 +405,13 @@ async def list_violations(
     enriched = await service.enrich_violations(raw)
     total = await service.wf_violation_manager.count(**filter_data)
     return ListDataResponseSchema[ViolationOut].create(
-        list_data=enriched,
+        list_data=[item.model_dump() for item in enriched],
         pagination=pagination,
         total=total,
     )
 
 
-@workforce_router.post(
-    "/violations", responses=get_responses(ResponseGroup.ALL_ERRORS), status_code=201
-)
+@workforce_router.post("/violations", responses=get_responses(ResponseGroup.ALL_ERRORS), status_code=201)
 @catch_all_exceptions
 async def create_violation(
     body: CreateViolationRequest,
@@ -458,27 +422,21 @@ async def create_violation(
     return DataResponseSchema[ViolationOut](data=enriched[0])
 
 
-@workforce_router.patch(
-    "/violations/{violation_id}", responses=get_responses(ResponseGroup.ALL_ERRORS)
-)
+@workforce_router.patch("/violations/{violation_id}", responses=get_responses(ResponseGroup.ALL_ERRORS))
 @catch_all_exceptions
 async def update_violation(
     violation_id: UUID,
     body: UpdateViolationRequest,
     service: WorkforceService = Depends(get_workforce_service),
 ) -> DataResponseSchema[ViolationOut]:
-    item = await service.wf_violation_manager.update_by_id(
-        violation_id, body.model_dump(exclude_none=True)
-    )
+    item = await service.wf_violation_manager.update_by_id(violation_id, body.model_dump(exclude_none=True))
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Violation not found")
     enriched = await service.enrich_violations([item])
     return DataResponseSchema[ViolationOut](data=enriched[0])
 
 
-@workforce_router.post(
-    "/violations/scan", responses=get_responses(ResponseGroup.ALL_ERRORS)
-)
+@workforce_router.post("/violations/scan", responses=get_responses(ResponseGroup.ALL_ERRORS))
 @catch_all_exceptions
 async def scan_violations(
     service: WorkforceService = Depends(get_workforce_service),
@@ -487,9 +445,7 @@ async def scan_violations(
     return DataResponseSchema[ViolationScanResult](data=result)
 
 
-@workforce_router.post(
-    "/violations/auto-escalate", responses=get_responses(ResponseGroup.ALL_ERRORS)
-)
+@workforce_router.post("/violations/auto-escalate", responses=get_responses(ResponseGroup.ALL_ERRORS))
 @catch_all_exceptions
 async def auto_escalate_violations(
     service: WorkforceService = Depends(get_workforce_service),
@@ -500,9 +456,8 @@ async def auto_escalate_violations(
 
 # ── ArticleMapping ────────────────────────────────────────────────────────────
 
-@workforce_router.get(
-    "/article-mappings", responses=get_responses(ResponseGroup.ALL_ERRORS)
-)
+
+@workforce_router.get("/article-mappings", responses=get_responses(ResponseGroup.ALL_ERRORS))
 @catch_all_exceptions
 async def list_article_mappings(
     service: WorkforceService = Depends(get_workforce_service),
@@ -513,23 +468,17 @@ async def list_article_mappings(
     )
 
 
-@workforce_router.post(
-    "/article-mappings", responses=get_responses(ResponseGroup.ALL_ERRORS), status_code=201
-)
+@workforce_router.post("/article-mappings", responses=get_responses(ResponseGroup.ALL_ERRORS), status_code=201)
 @catch_all_exceptions
 async def create_article_mapping(
     body: CreateArticleMappingRequest,
     service: WorkforceService = Depends(get_workforce_service),
 ) -> DataResponseSchema[ArticleMappingSchema]:
     item = await service.wf_article_mapping_manager.create(body.model_dump())
-    return DataResponseSchema[ArticleMappingSchema](
-        data=ArticleMappingSchema.model_validate(item)
-    )
+    return DataResponseSchema[ArticleMappingSchema](data=ArticleMappingSchema.model_validate(item))
 
 
-@workforce_router.post(
-    "/article-mappings/bulk", responses=get_responses(ResponseGroup.ALL_ERRORS), status_code=201
-)
+@workforce_router.post("/article-mappings/bulk", responses=get_responses(ResponseGroup.ALL_ERRORS), status_code=201)
 @catch_all_exceptions
 async def bulk_create_article_mappings(
     body: ArticleMappingBulkRequest,
@@ -540,9 +489,7 @@ async def bulk_create_article_mappings(
     return DataResponseSchema[dict](data={"created": len(data)})
 
 
-@workforce_router.delete(
-    "/article-mappings/{mapping_id}", responses=get_responses(ResponseGroup.ALL_ERRORS)
-)
+@workforce_router.delete("/article-mappings/{mapping_id}", responses=get_responses(ResponseGroup.ALL_ERRORS))
 @catch_all_exceptions
 async def delete_article_mapping(
     mapping_id: UUID,

@@ -49,7 +49,7 @@ async def test_create_plan_item_returns_201(client):
     assert response.status_code == 201
     body = response.json()
     assert body["data"]["housing_id"] == HOUSING_1_ID
-    assert body["data"]["planned_volume"] == "5.0"
+    assert body["data"]["planned_volume"] == "5.0000"
 
 
 async def test_get_plan_item_not_found_returns_404(client):

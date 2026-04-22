@@ -28,9 +28,7 @@ async def run_reconciliation(
     service: ReconciliationService = Depends(get_reconciliation_service),
 ) -> DataResponseSchema[ReconciliationRunResponse]:
     result = await service.run_reconciliation(body.date, body.housing_id)
-    return DataResponseSchema[ReconciliationRunResponse](
-        data=ReconciliationRunResponse(**result)
-    )
+    return DataResponseSchema[ReconciliationRunResponse](data=ReconciliationRunResponse(**result))
 
 
 @reconciliation_router.get("/results", responses=get_responses(ResponseGroup.ALL_ERRORS))
@@ -57,9 +55,7 @@ async def list_reconciliation_results(
     )
 
 
-@reconciliation_router.get(
-    "/results/{result_id}", responses=get_responses(ResponseGroup.ALL_ERRORS)
-)
+@reconciliation_router.get("/results/{result_id}", responses=get_responses(ResponseGroup.ALL_ERRORS))
 @catch_all_exceptions
 async def get_reconciliation_result(
     result_id: UUID,
@@ -67,12 +63,8 @@ async def get_reconciliation_result(
 ) -> DataResponseSchema[ReconciliationResultSchema]:
     item = await service.reconciliation_manager.get_by_id(result_id)
     if not item:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Reconciliation result not found"
-        )
-    return DataResponseSchema[ReconciliationResultSchema](
-        data=ReconciliationResultSchema.model_validate(item)
-    )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reconciliation result not found")
+    return DataResponseSchema[ReconciliationResultSchema](data=ReconciliationResultSchema.model_validate(item))
 
 
 @reconciliation_router.get("/summaries", responses=get_responses(ResponseGroup.ALL_ERRORS))
@@ -100,9 +92,7 @@ async def list_daily_summaries(
     )
 
 
-@reconciliation_router.get(
-    "/summaries/{summary_id}", responses=get_responses(ResponseGroup.ALL_ERRORS)
-)
+@reconciliation_router.get("/summaries/{summary_id}", responses=get_responses(ResponseGroup.ALL_ERRORS))
 @catch_all_exceptions
 async def get_daily_summary(
     summary_id: UUID,
@@ -110,7 +100,5 @@ async def get_daily_summary(
 ) -> DataResponseSchema[DailySummarySchema]:
     item = await service.daily_summary_manager.get_by_id(summary_id)
     if not item:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Daily summary not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Daily summary not found")
     return DataResponseSchema[DailySummarySchema](data=DailySummarySchema.model_validate(item))

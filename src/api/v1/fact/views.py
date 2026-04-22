@@ -73,9 +73,7 @@ async def update_work_fact(
     body: UpdateWorkFactRequest,
     service: FactService = Depends(get_fact_service),
 ) -> DataResponseSchema[WorkFactSchema]:
-    item = await service.work_fact_manager.update_by_id(
-        fact_id, body.model_dump(exclude_none=True)
-    )
+    item = await service.work_fact_manager.update_by_id(fact_id, body.model_dump(exclude_none=True))
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Work fact not found")
     return DataResponseSchema[WorkFactSchema](data=WorkFactSchema.model_validate(item))

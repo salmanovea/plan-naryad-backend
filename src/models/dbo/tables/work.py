@@ -1,6 +1,6 @@
 from decimal import Decimal
 from enum import Enum
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
 from uuid import UUID
 
 from sqlalchemy import ARRAY, ForeignKey, Integer, Numeric, String
@@ -8,6 +8,9 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.dbo.mixins import IDMixin, RaportMixin
 from src.models.dbo.base_model import Base
+
+if TYPE_CHECKING:
+    from src.models.dbo.tables.housing import Housing
 
 
 class DependencyType(str, Enum):

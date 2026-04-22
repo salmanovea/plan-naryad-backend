@@ -43,7 +43,7 @@ async def test_create_work_fact_returns_201(client):
     assert response.status_code == 201
     body = response.json()
     assert body["data"]["housing_id"] == HOUSING_1_ID
-    assert body["data"]["actual_volume"] == "10.5"
+    assert body["data"]["actual_volume"] == "10.5000"
 
 
 async def test_list_work_facts_with_date_filter(client):

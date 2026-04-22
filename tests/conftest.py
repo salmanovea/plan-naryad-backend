@@ -60,12 +60,8 @@ def drop_create_db():
     conn.autocommit = True
     with conn.cursor() as cur:
         cur.execute(f'DROP DATABASE IF EXISTS "{_TEST_DB_NAME}"')
-        cur.execute(
-            f'CREATE DATABASE "{_TEST_DB_NAME}" WITH OWNER "{_TEST_DB_CREDS["username"]}"'
-        )
-        cur.execute(
-            f'GRANT ALL PRIVILEGES ON DATABASE "{_TEST_DB_NAME}" TO "{_TEST_DB_CREDS["username"]}"'
-        )
+        cur.execute(f'CREATE DATABASE "{_TEST_DB_NAME}" WITH OWNER "{_TEST_DB_CREDS["username"]}"')
+        cur.execute(f'GRANT ALL PRIVILEGES ON DATABASE "{_TEST_DB_NAME}" TO "{_TEST_DB_CREDS["username"]}"')
     conn.close()
 
     test_conn = psycopg2.connect(
@@ -110,12 +106,7 @@ def _load_fixtures() -> None:
         fields = list(rows[0].keys())
         stream = io.StringIO()
         for row in rows:
-            stream.write(
-                "\t".join(
-                    ["\\N" if row.get(field) is None else str(row[field]) for field in fields]
-                )
-                + "\n"
-            )
+            stream.write("\t".join(["\\N" if row.get(field) is None else str(row[field]) for field in fields]) + "\n")
         stream.seek(0)
         cursor.copy_from(stream, table, columns=fields)
     test_conn.commit()

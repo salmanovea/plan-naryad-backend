@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 from uuid import UUID
 
 from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, JSON, Numeric, String, func
@@ -9,6 +9,13 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.dbo.mixins import IDMixin
 from src.models.dbo.base_model import Base
+
+if TYPE_CHECKING:
+    from src.models.dbo.tables.contractor import Contractor
+    from src.models.dbo.tables.housing import Housing, Section, Floor
+    from src.models.dbo.tables.work import WorkType
+    from src.models.dbo.tables.plan import PlanItem
+    from src.models.dbo.tables.fact import WorkFact
 
 
 class ReconciliationStatus(str, Enum):

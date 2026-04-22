@@ -3,7 +3,7 @@ from src.config.admin.model_admin.base_admin import BaseAdmin
 from src.models.dbo.tables.work import WorkGroup, WorkType
 
 
-class WorkGroupAdmin(BaseAdmin, model=WorkGroup):
+class WorkGroupAdmin(BaseAdmin, model=WorkGroup):  # type: ignore[call-arg]
     category = CATEGORY_WORK_CATALOG
     name = "Группа работ"
     name_plural = "Группы работ"
@@ -35,7 +35,7 @@ class WorkGroupAdmin(BaseAdmin, model=WorkGroup):
     column_sortable_list = [WorkGroup.order, WorkGroup.name, WorkGroup.code]
 
 
-class WorkTypeAdmin(BaseAdmin, model=WorkType):
+class WorkTypeAdmin(BaseAdmin, model=WorkType):  # type: ignore[call-arg]
     category = CATEGORY_WORK_CATALOG
     name = "Вид работ"
     name_plural = "Виды работ"

@@ -32,9 +32,7 @@ async def list_contractors(
 ) -> ListDataResponseSchema[ContractorSchema]:
     filter_data = filters.model_dump(exclude_none=True)
     search_text = filter_data.pop("search", None)
-    items = await service.contractor_manager.search(
-        search=search_text, order_by=["name"], **filter_data
-    )
+    items = await service.contractor_manager.search(search=search_text, order_by=["name"], **filter_data)
     total = await service.contractor_manager.count(search=search_text, **filter_data)
     return ListDataResponseSchema[ContractorSchema].create(
         list_data=[ContractorSchema.model_validate(i) for i in items],
@@ -72,9 +70,7 @@ async def update_contractor(
     body: UpdateContractorRequest,
     service: ContractorService = Depends(get_contractor_service),
 ) -> DataResponseSchema[ContractorSchema]:
-    item = await service.contractor_manager.update_by_id(
-        contractor_id, body.model_dump(exclude_none=True)
-    )
+    item = await service.contractor_manager.update_by_id(contractor_id, body.model_dump(exclude_none=True))
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Contractor not found")
     return DataResponseSchema[ContractorSchema](data=ContractorSchema.model_validate(item))
@@ -92,9 +88,8 @@ async def delete_contractor(
 
 # ── Assignments ───────────────────────────────────────────────────────────────
 
-@contractor_router.get(
-    "/{housing_id}/assignments", responses=get_responses(ResponseGroup.ALL_ERRORS)
-)
+
+@contractor_router.get("/{housing_id}/assignments", responses=get_responses(ResponseGroup.ALL_ERRORS))
 @catch_all_exceptions
 async def list_assignments(
     housing_id: UUID,
@@ -109,23 +104,17 @@ async def list_assignments(
     )
 
 
-@contractor_router.post(
-    "/assignments", responses=get_responses(ResponseGroup.ALL_ERRORS), status_code=201
-)
+@contractor_router.post("/assignments", responses=get_responses(ResponseGroup.ALL_ERRORS), status_code=201)
 @catch_all_exceptions
 async def create_assignment(
     body: CreateContractorAssignmentRequest,
     service: ContractorService = Depends(get_contractor_service),
 ) -> DataResponseSchema[ContractorAssignmentSchema]:
     item = await service.assignment_manager.create(body.model_dump())
-    return DataResponseSchema[ContractorAssignmentSchema](
-        data=ContractorAssignmentSchema.model_validate(item)
-    )
+    return DataResponseSchema[ContractorAssignmentSchema](data=ContractorAssignmentSchema.model_validate(item))
 
 
-@contractor_router.delete(
-    "/assignments/{assignment_id}", responses=get_responses(ResponseGroup.ALL_ERRORS)
-)
+@contractor_router.delete("/assignments/{assignment_id}", responses=get_responses(ResponseGroup.ALL_ERRORS))
 @catch_all_exceptions
 async def delete_assignment(
     assignment_id: UUID,
