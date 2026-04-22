@@ -1,0 +1,11 @@
+.claude
+.idea
+.venv
+.env
+CLAUDE.md
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+htmlcov/
+.coverage
