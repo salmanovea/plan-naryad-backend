@@ -27,10 +27,6 @@ def init_admin(app: FastAPI) -> Admin:
     admin.add_view(ContractorAdmin)
     admin.add_view(ContractorAssignmentAdmin)
 
-    # Workforce
-    admin.add_view(WfProjectAdmin)
-    admin.add_view(WfProjectObjectAdmin)
-
     # Sync
     admin.add_view(SyncActionsAdmin)
 
