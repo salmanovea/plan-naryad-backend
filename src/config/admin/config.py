@@ -13,6 +13,8 @@ def init_admin(app: FastAPI) -> Admin:
     admin = Admin(app=app, engine=async_engine, title="Plan-naryad Admin")
 
     # Project structure
+    admin.add_view(WfProjectAdmin)
+    admin.add_view(WfProjectObjectAdmin)
     admin.add_view(HousingAdmin)
     admin.add_view(SectionAdmin)
     admin.add_view(FloorAdmin)

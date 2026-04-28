@@ -28,7 +28,7 @@ class HousingAdmin(BaseAdmin, model=Housing):  # type: ignore[call-arg]
         Housing.name,
         Housing.complex_name,
         Housing.description,
-        Housing.construction_object_id,
+        Housing.construction_object,
         Housing.raport_id,
     ]
     column_searchable_list = [Housing.name, Housing.complex_name, Housing.raport_id]
@@ -57,7 +57,7 @@ class SectionAdmin(BaseAdmin, model=Section):  # type: ignore[call-arg]
         Section.raport_id,
     ]
     form_columns = [
-        Section.housing_id,
+        Section.housing,
         Section.name,
         Section.section_number,
         Section.description,
@@ -89,7 +89,7 @@ class FloorAdmin(BaseAdmin, model=Floor):  # type: ignore[call-arg]
         Floor.raport_id,
     ]
     form_columns = [
-        Floor.section_id,
+        Floor.section,
         Floor.floor_number,
         Floor.name,
         Floor.description,

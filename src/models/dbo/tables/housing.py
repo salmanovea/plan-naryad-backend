@@ -24,6 +24,10 @@ class Housing(IDMixin, RaportMixin, Base):
         index=True,
     )
 
+    def __str__(self) -> str:
+        return self.name
+
+    construction_object: Mapped[Optional["WfProjectObject"]] = relationship(foreign_keys=[construction_object_id])  # type: ignore[name-defined]
     sections: Mapped[List["Section"]] = relationship(back_populates="housing", cascade="all, delete-orphan")
 
 
@@ -40,6 +44,9 @@ class Section(IDMixin, RaportMixin, Base):
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     section_number: Mapped[int] = mapped_column(Integer, nullable=False)
     description: Mapped[Optional[str]] = mapped_column(String(500))
+
+    def __str__(self) -> str:
+        return self.name
 
     housing: Mapped["Housing"] = relationship(back_populates="sections")
     floors: Mapped[List["Floor"]] = relationship(back_populates="section", cascade="all, delete-orphan")
@@ -58,5 +65,8 @@ class Floor(IDMixin, RaportMixin, Base):
     floor_number: Mapped[int] = mapped_column(Integer, nullable=False)
     name: Mapped[Optional[str]] = mapped_column(String(100))
     description: Mapped[Optional[str]] = mapped_column(String(500))
+
+    def __str__(self) -> str:
+        return self.name or str(self.floor_number)
 
     section: Mapped["Section"] = relationship(back_populates="floors")

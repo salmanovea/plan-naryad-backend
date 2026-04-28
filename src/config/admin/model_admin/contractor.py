@@ -56,24 +56,24 @@ class ContractorAssignmentAdmin(BaseAdmin, model=ContractorAssignment):  # type:
 
     column_list = [
         ContractorAssignment.id,
-        ContractorAssignment.contractor_id,
-        ContractorAssignment.housing_id,
-        ContractorAssignment.section_id,
-        ContractorAssignment.work_group_id,
+        ContractorAssignment.contractor,
+        ContractorAssignment.housing,
+        ContractorAssignment.section,
+        ContractorAssignment.work_group,
     ]
     column_details_list = [
         ContractorAssignment.id,
-        ContractorAssignment.contractor_id,
-        ContractorAssignment.housing_id,
-        ContractorAssignment.section_id,
-        ContractorAssignment.work_group_id,
+        ContractorAssignment.contractor,
+        ContractorAssignment.housing,
+        ContractorAssignment.section,
+        ContractorAssignment.work_group,
         ContractorAssignment.work_type_ids,
     ]
     form_columns = [
-        ContractorAssignment.contractor_id,
-        ContractorAssignment.housing_id,
-        ContractorAssignment.section_id,
-        ContractorAssignment.work_group_id,
+        ContractorAssignment.contractor,
+        ContractorAssignment.housing,
+        ContractorAssignment.section,
+        ContractorAssignment.work_group,
         ContractorAssignment.work_type_ids,
     ]
-    column_sortable_list = [ContractorAssignment.contractor_id]
+    column_sortable_list = []

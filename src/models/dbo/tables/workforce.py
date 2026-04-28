@@ -53,6 +53,9 @@ class WfProject(IDMixin, RaportMixin, Base):
     project_class: Mapped[str] = mapped_column(String(50), nullable=False, default=ProjectClass.COMFORT)
     description: Mapped[Optional[str]] = mapped_column(String(1000))
 
+    def __str__(self) -> str:
+        return self.name
+
     objects: Mapped[List["WfProjectObject"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     budget_periods: Mapped[List["WfBudgetPeriod"]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
@@ -80,6 +83,9 @@ class WfProjectObject(IDMixin, RaportMixin, Base):
     description: Mapped[Optional[str]] = mapped_column(String(1000))
     planned_end_date: Mapped[Optional[date]] = mapped_column(Date)
     total_budget_remaining: Mapped[Optional[Decimal]] = mapped_column(Numeric(16, 2))
+
+    def __str__(self) -> str:
+        return self.name
 
     project: Mapped["WfProject"] = relationship(back_populates="objects")
     budget_items: Mapped[List["WfBudgetItem"]] = relationship(back_populates="project_object")

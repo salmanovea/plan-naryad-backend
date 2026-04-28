@@ -2,7 +2,7 @@ from fastapi import Request
 from sqladmin import action
 from starlette.responses import RedirectResponse, Response
 
-from src.config.admin.categories import CATEGORY_WORKFORCE
+from src.config.admin.categories import CATEGORY_PROJECT_STRUCTURE
 from src.config.admin.model_admin.base_admin import BaseAdmin
 from src.config.postgres.db_config import get_async_session
 from src.models.dbo.tables.workforce import WfProject, WfProjectObject
@@ -10,7 +10,7 @@ from src.services.sync.service import SyncService
 
 
 class WfProjectAdmin(BaseAdmin, model=WfProject):  # type: ignore[call-arg]
-    category = CATEGORY_WORKFORCE
+    category = CATEGORY_PROJECT_STRUCTURE
     name = "Проект"
     name_plural = "Проекты"
     icon = "fa-solid fa-city"
@@ -73,7 +73,7 @@ class WfProjectAdmin(BaseAdmin, model=WfProject):  # type: ignore[call-arg]
 
 
 class WfProjectObjectAdmin(BaseAdmin, model=WfProjectObject):  # type: ignore[call-arg]
-    category = CATEGORY_WORKFORCE
+    category = CATEGORY_PROJECT_STRUCTURE
     name = "Объект строительства"
     name_plural = "Объекты строительства"
     icon = "fa-solid fa-building-columns"
@@ -95,7 +95,7 @@ class WfProjectObjectAdmin(BaseAdmin, model=WfProjectObject):  # type: ignore[ca
         WfProjectObject.raport_id,
     ]
     form_columns = [
-        WfProjectObject.project_id,
+        WfProjectObject.project,
         WfProjectObject.name,
         WfProjectObject.description,
         WfProjectObject.planned_end_date,

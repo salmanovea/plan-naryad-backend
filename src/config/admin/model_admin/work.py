@@ -43,7 +43,7 @@ class WorkTypeAdmin(BaseAdmin, model=WorkType):  # type: ignore[call-arg]
 
     column_list = [
         WorkType.id,
-        WorkType.group_id,
+        WorkType.group,
         WorkType.name,
         WorkType.code,
         WorkType.unit,
@@ -51,7 +51,7 @@ class WorkTypeAdmin(BaseAdmin, model=WorkType):  # type: ignore[call-arg]
     ]
     column_details_list = [
         WorkType.id,
-        WorkType.group_id,
+        WorkType.group,
         WorkType.name,
         WorkType.code,
         WorkType.unit,
@@ -59,7 +59,7 @@ class WorkTypeAdmin(BaseAdmin, model=WorkType):  # type: ignore[call-arg]
         WorkType.raport_id,
     ]
     form_columns = [
-        WorkType.group_id,
+        WorkType.group,
         WorkType.name,
         WorkType.code,
         WorkType.unit,
