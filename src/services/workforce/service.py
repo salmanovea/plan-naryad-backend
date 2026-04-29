@@ -1,13 +1,14 @@
 from collections import defaultdict
 from datetime import date, timedelta
 from decimal import Decimal
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 from uuid import UUID
 
 from fastapi import Depends
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.api.schemes import NamedEntitySchema
 from src.config.postgres.db_config import get_session
 from src.models import managers
 from src.models.dbo.tables.workforce import (
@@ -78,6 +79,7 @@ class WorkforceService(BaseService):
         self.wf_headcount_fact_manager = managers.WfHeadcountFactManager(db)
         self.wf_headcount_plan_manager = managers.WfHeadcountPlanManager(db)
         self.contractor_manager = managers.ContractorManager(db)
+        self.work_type_manager = managers.WorkTypeManager(db)
         self.wf_contractor_assignment_manager = managers.WfContractorAssignmentManager(db)
         self.wf_challenge_manager = managers.WfChallengeManager(db)
         self.wf_challenge_item_manager = managers.WfChallengeItemManager(db)
@@ -86,58 +88,74 @@ class WorkforceService(BaseService):
         self.wf_violation_manager = managers.WfViolationManager(db)
         self.wf_article_mapping_manager = managers.WfArticleMappingManager(db)
 
+    async def _get_work_types_map(self, work_type_ids: Iterable[UUID]) -> Dict[UUID, NamedEntitySchema]:
+        ids = list(set(work_type_ids))
+        if not ids:
+            return {}
+        wt_list = await self.work_type_manager.get_by_ids(ids)
+        return {wt.id: NamedEntitySchema(id=wt.id, name=wt.name) for wt in wt_list}
+
     async def _get_headcount_avg(
         self,
         project_id: UUID,
         days: int,
         object_id: Optional[UUID] = None,
-    ) -> Dict[str, float]:
+    ) -> Dict[UUID, float]:
         since = date.today() - timedelta(days=days)
         q = (
-            select(WfHeadcountFact.work_type, func.avg(WfHeadcountFact.count).label("avg"))
+            select(WfHeadcountFact.work_type_id, func.avg(WfHeadcountFact.count).label("avg"))
             .where(WfHeadcountFact.project_id == project_id, WfHeadcountFact.fact_date >= since)
-            .group_by(WfHeadcountFact.work_type)
+            .group_by(WfHeadcountFact.work_type_id)
         )
         if object_id is not None:
             q = q.where(WfHeadcountFact.object_id == object_id)
         rows = await self.wf_headcount_fact_manager.fetch(q, with_scalars=False)
-        return {r.work_type: float(r.avg) for r in rows}
+        return {r.work_type_id: float(r.avg) for r in rows}
 
     async def _get_plans(
         self,
         project_id: UUID,
         period_month: date,
         object_id: Optional[UUID] = None,
-    ) -> Dict[str, int]:
-        q = select(WfHeadcountPlan.work_type, WfHeadcountPlan.planned_count).where(
+    ) -> Dict[UUID, int]:
+        q = select(WfHeadcountPlan.work_type_id, WfHeadcountPlan.planned_count).where(
             WfHeadcountPlan.project_id == project_id, WfHeadcountPlan.period_month == period_month
         )
         if object_id is not None:
             q = q.where(WfHeadcountPlan.object_id == object_id)
         rows = await self.wf_headcount_plan_manager.fetch(q, with_scalars=False)
-        return {r.work_type: r.planned_count for r in rows}
+        return {r.work_type_id: r.planned_count for r in rows}
 
     def _build_work_type_rows(
         self,
         items: List,
-        norms: Dict[str, WfWorkforceNorm],
-        fact_30d: Dict[str, float],
-        fact_7d: Dict[str, float],
-        plans: Dict[str, int],
+        norms: Dict[UUID, WfWorkforceNorm],
+        fact_30d: Dict[UUID, float],
+        fact_7d: Dict[UUID, float],
+        plans: Dict[UUID, int],
     ) -> List[WorkTypeRow]:
-        agg: Dict[str, list] = {}
+        # Build work-type name lookup from the budget items (work_type rel is selectin-loaded)
+        wt_named: Dict[UUID, NamedEntitySchema] = {}
         for it in items:
-            if it.work_type not in agg:
-                agg[it.work_type] = [Decimal(0), Decimal(0)]
-            agg[it.work_type][0] += it.bdr_amount
-            agg[it.work_type][1] += it.management_completion_amount
+            if it.work_type_id not in wt_named:
+                wt_named[it.work_type_id] = NamedEntitySchema(
+                    id=it.work_type_id,
+                    name=it.work_type.name if it.work_type else None,
+                )
+
+        agg: Dict[UUID, list] = {}
+        for it in items:
+            if it.work_type_id not in agg:
+                agg[it.work_type_id] = [Decimal(0), Decimal(0)]
+            agg[it.work_type_id][0] += it.bdr_amount
+            agg[it.work_type_id][1] += it.management_completion_amount
 
         rows = []
-        for work_type, (bdr, mgmt_completion) in agg.items():
+        for work_type_id, (bdr, mgmt_completion) in agg.items():
             net_bdr = bdr - mgmt_completion
             uv_pct = float(mgmt_completion / bdr * 100) if bdr else 0.0
 
-            norm = norms.get(work_type)
+            norm = norms.get(work_type_id)
             norm_day = norm.median_day_bdr if norm else None
             norm_month = (
                 float(norm.median_month_bdr)
@@ -146,16 +164,16 @@ class WorkforceService(BaseService):
             )
             required = float(net_bdr) / norm_month if norm_month and norm_month > 0 else None
 
-            f30 = fact_30d.get(work_type, 0.0)
-            f7 = fact_7d.get(work_type, 0.0)
-            plan = plans.get(work_type)
+            f30 = fact_30d.get(work_type_id, 0.0)
+            f7 = fact_7d.get(work_type_id, 0.0)
+            plan = plans.get(work_type_id)
 
             coverage = f30 / required * 100 if required and required > 0 else None
             cov_report = f30 / plan * 100 if plan and plan > 0 else None
 
             rows.append(
                 WorkTypeRow(
-                    work_type=work_type,
+                    work_type=wt_named.get(work_type_id, NamedEntitySchema(id=work_type_id)),
                     bdr_amount=bdr,
                     management_completion_amount=mgmt_completion,
                     uv_pct=round(uv_pct, 1),
@@ -199,7 +217,7 @@ class WorkforceService(BaseService):
 
         all_items = await self.wf_budget_item_manager.search(budget_period_id=bp.id)
         norms_list = await self.wf_workforce_norm_manager.search(project_class=project.project_class)
-        norms = {n.work_type: n for n in norms_list}
+        norms = {n.work_type_id: n for n in norms_list}
         objects = await self.wf_project_object_manager.search(project_id=project.id)
 
         items_by_obj: Dict[Optional[UUID], List] = defaultdict(list)
@@ -229,7 +247,7 @@ class WorkforceService(BaseService):
             if covered:
                 worst = min(covered, key=lambda r: r.coverage_pct or 100)
                 if worst.coverage_pct is not None and worst.coverage_pct < 85:
-                    top_p = worst.work_type
+                    top_p = worst.work_type.name
 
             obj_dashboard_items.append(
                 ObjectDashboardItem(
@@ -312,7 +330,7 @@ class WorkforceService(BaseService):
                 if covered:
                     w = min(covered, key=lambda r: r.coverage_pct or 100)
                     if w.coverage_pct and w.coverage_pct < 85:
-                        top_p = w.work_type
+                        top_p = w.work_type.name
 
             rows.append(
                 ProjectRow(
@@ -347,7 +365,7 @@ class WorkforceService(BaseService):
         obj_map = {o.id: o for o in objects}
 
         norms_result = await self.wf_workforce_norm_manager.search()
-        norms = {(n.work_type, n.project_class): n for n in norms_result}
+        norms = {(n.work_type_id, n.project_class): n for n in norms_result}
 
         bp_q = (
             select(WfBudgetPeriod)
@@ -366,14 +384,14 @@ class WorkforceService(BaseService):
         fact_q = (
             select(
                 WfHeadcountFact.object_id,
-                WfHeadcountFact.work_type,
+                WfHeadcountFact.work_type_id,
                 func.avg(WfHeadcountFact.count).label("avg"),
             )
             .where(WfHeadcountFact.project_id == project_id, WfHeadcountFact.fact_date >= since)
-            .group_by(WfHeadcountFact.object_id, WfHeadcountFact.work_type)
+            .group_by(WfHeadcountFact.object_id, WfHeadcountFact.work_type_id)
         )
         fact_rows = await self.wf_headcount_fact_manager.fetch(fact_q, with_scalars=False)
-        fact_map: Dict[Tuple, float] = {(r.object_id, r.work_type): float(r.avg) for r in fact_rows}
+        fact_map: Dict[Tuple, float] = {(r.object_id, r.work_type_id): float(r.avg) for r in fact_rows}
 
         rows = []
         for item in items:
@@ -384,10 +402,10 @@ class WorkforceService(BaseService):
                 continue
 
             proj_class = project.project_class if project else "Комфорт"
-            norm = norms.get((item.work_type, proj_class))
+            norm = norms.get((item.work_type_id, proj_class))
             norm_month = float(norm.median_month_bdr) if norm else None
 
-            f30 = fact_map.get((item.object_id, item.work_type), 0.0)
+            f30 = fact_map.get((item.object_id, item.work_type_id), 0.0)
             remaining = item.remaining_amount
             planned_end = item.planned_end_date or obj.planned_end_date
 
@@ -405,7 +423,10 @@ class WorkforceService(BaseService):
                 ForecastRow(
                     object_id=obj.id,
                     object_name=obj.name,
-                    work_type=item.work_type,
+                    work_type=NamedEntitySchema(
+                        id=item.work_type_id,
+                        name=item.work_type.name if item.work_type else None,
+                    ),
                     remaining_amount=remaining,
                     planned_end_date=planned_end,
                     fact_30d=round(f30, 1),
@@ -426,19 +447,19 @@ class WorkforceService(BaseService):
         fact_q = (
             select(
                 WfHeadcountFact.contractor_id,
-                WfHeadcountFact.work_type,
+                WfHeadcountFact.work_type_id,
                 func.avg(WfHeadcountFact.count).label("avg"),
             )
             .where(WfHeadcountFact.object_id == object_id, WfHeadcountFact.fact_date >= since)
-            .group_by(WfHeadcountFact.contractor_id, WfHeadcountFact.work_type)
+            .group_by(WfHeadcountFact.contractor_id, WfHeadcountFact.work_type_id)
         )
         fact_rows = await self.wf_headcount_fact_manager.fetch(fact_q, with_scalars=False)
 
-        plan_q = select(WfHeadcountPlan.contractor_id, WfHeadcountPlan.work_type, WfHeadcountPlan.planned_count).where(
+        plan_q = select(WfHeadcountPlan.contractor_id, WfHeadcountPlan.work_type_id, WfHeadcountPlan.planned_count).where(
             WfHeadcountPlan.object_id == object_id, WfHeadcountPlan.period_month == period
         )
         plan_rows = await self.wf_headcount_plan_manager.fetch(plan_q, with_scalars=False)
-        plan_map = {(r.contractor_id, r.work_type): r.planned_count for r in plan_rows}
+        plan_map = {(r.contractor_id, r.work_type_id): r.planned_count for r in plan_rows}
 
         contractor_ids = {r.contractor_id for r in fact_rows if r.contractor_id}
         contractors: Dict[UUID, str] = {}
@@ -446,17 +467,20 @@ class WorkforceService(BaseService):
             c_list = await self.contractor_manager.get_by_ids(contractor_ids)
             contractors = {c.id: c.name for c in c_list}
 
+        wt_ids = {r.work_type_id for r in fact_rows}
+        work_types_map = await self._get_work_types_map(wt_ids)
+
         result = []
         for r in fact_rows:
             f30 = float(r.avg)
-            plan = plan_map.get((r.contractor_id, r.work_type))
+            plan = plan_map.get((r.contractor_id, r.work_type_id))
             cov = round(f30 / plan * 100, 1) if plan and plan > 0 else None
             cname = contractors.get(r.contractor_id, "Без подрядчика") if r.contractor_id else "Без подрядчика"
             result.append(
                 ContractorHeadcountRow(
                     contractor_id=r.contractor_id,
                     contractor_name=cname,
-                    work_type=r.work_type,
+                    work_type=work_types_map.get(r.work_type_id, NamedEntitySchema(id=r.work_type_id)),
                     plan=plan,
                     fact_30d=round(f30, 1),
                     coverage_pct=cov,
@@ -475,11 +499,11 @@ class WorkforceService(BaseService):
         fact_q = (
             select(
                 WfHeadcountFact.object_id,
-                WfHeadcountFact.work_type,
+                WfHeadcountFact.work_type_id,
                 func.avg(WfHeadcountFact.count).label("avg"),
             )
             .where(WfHeadcountFact.fact_date >= since)
-            .group_by(WfHeadcountFact.object_id, WfHeadcountFact.work_type)
+            .group_by(WfHeadcountFact.object_id, WfHeadcountFact.work_type_id)
         )
         fact_rows = await self.wf_headcount_fact_manager.fetch(fact_q, with_scalars=False)
 
@@ -499,38 +523,41 @@ class WorkforceService(BaseService):
             if not bp:
                 continue
 
-            norms = {n.work_type: n for n in norms_list if n.project_class == proj.project_class}
+            norms = {n.work_type_id: n for n in norms_list if n.project_class == proj.project_class}
             items = await self.wf_budget_item_manager.search(budget_period_id=bp.id)
             for item in items:
                 if item.object_id is None:
                     continue
-                norm = norms.get(item.work_type)
+                norm = norms.get(item.work_type_id)
                 if not norm:
                     continue
                 nm = float(norm.median_month_bdr)
                 net = float(item.bdr_amount - item.management_completion_amount)
                 if nm > 0:
-                    required_map[(item.object_id, item.work_type)] = net / nm
+                    required_map[(item.object_id, item.work_type_id)] = net / nm
 
-        fact_by_key = {(r.object_id, r.work_type): float(r.avg) for r in fact_rows}
+        fact_by_key = {(r.object_id, r.work_type_id): float(r.avg) for r in fact_rows}
         objects = await self.wf_project_object_manager.search()
         obj_names = {o.id: o.name for o in objects}
 
-        coverage_by_wt: Dict[str, List[Tuple]] = defaultdict(list)
-        for (obj_id, wt), req in required_map.items():
+        coverage_by_wt: Dict[UUID, List[Tuple]] = defaultdict(list)
+        for (obj_id, wt_id), req in required_map.items():
             if req <= 0:
                 continue
-            fact = fact_by_key.get((obj_id, wt), 0.0)
-            coverage_by_wt[wt].append((obj_id, fact / req * 100))
+            fact = fact_by_key.get((obj_id, wt_id), 0.0)
+            coverage_by_wt[wt_id].append((obj_id, fact / req * 100))
+
+        all_wt_ids = set(coverage_by_wt.keys())
+        work_types_map = await self._get_work_types_map(all_wt_ids)
 
         problems = []
-        for wt, entries in coverage_by_wt.items():
+        for wt_id, entries in coverage_by_wt.items():
             below = [(oid, cov) for oid, cov in entries if cov < threshold_pct]
             if len(below) >= min_objects:
                 avg_cov = round(sum(c for _, c in below) / len(below), 1)
                 problems.append(
                     SystemProblemRow(
-                        work_type=wt,
+                        work_type=work_types_map.get(wt_id, NamedEntitySchema(id=wt_id)),
                         affected_objects=len(below),
                         avg_coverage_pct=avg_cov,
                         object_names=[obj_names.get(oid, str(oid)) for oid, _ in below],
@@ -638,7 +665,7 @@ class WorkforceService(BaseService):
                             {
                                 "project_id": challenge.project_id,
                                 "object_id": challenge.object_id,
-                                "work_type": ci.work_type,
+                                "work_type_id": ci.work_type_id,
                                 "violation_date": today,
                                 "violation_type": ViolationType.MOBILIZATION_MISSED,
                                 "description": desc,
@@ -667,7 +694,7 @@ class WorkforceService(BaseService):
                     if wt.coverage_pct is not None and wt.coverage_pct < 60 and wt.required_headcount:
                         existing = await self.wf_violation_manager.search(
                             object_id=obj.id,
-                            work_type=wt.work_type,
+                            work_type_id=wt.work_type.id,
                             violation_type="coverage_critical",
                             violation_date__gte=today.replace(day=1),
                             resolved=False,
@@ -682,7 +709,7 @@ class WorkforceService(BaseService):
                                 {
                                     "project_id": proj.id,
                                     "object_id": obj.id,
-                                    "work_type": wt.work_type,
+                                    "work_type_id": wt.work_type.id,
                                     "violation_date": today,
                                     "violation_type": "coverage_critical",
                                     "description": desc,
@@ -694,7 +721,7 @@ class WorkforceService(BaseService):
                     if wt.plan_report and wt.fact_30d < wt.plan_report * 0.8:
                         existing = await self.wf_violation_manager.search(
                             object_id=obj.id,
-                            work_type=wt.work_type,
+                            work_type_id=wt.work_type.id,
                             violation_type="plan_not_met",
                             violation_date__gte=today.replace(day=1),
                             resolved=False,
@@ -704,7 +731,7 @@ class WorkforceService(BaseService):
                                 {
                                     "project_id": proj.id,
                                     "object_id": obj.id,
-                                    "work_type": wt.work_type,
+                                    "work_type_id": wt.work_type.id,
                                     "violation_date": today,
                                     "violation_type": "plan_not_met",
                                     "description": (
@@ -765,7 +792,10 @@ class WorkforceService(BaseService):
                     id=v.id,
                     project_id=v.project_id,
                     object_id=v.object_id,
-                    work_type=v.work_type,
+                    work_type=NamedEntitySchema(
+                        id=v.work_type_id,
+                        name=v.work_type.name if v.work_type else None,
+                    ),
                     contractor_id=v.contractor_id,
                     violation_date=v.violation_date,
                     violation_type=v.violation_type,

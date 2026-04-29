@@ -13,6 +13,7 @@ from src.models.dbo.base_model import Base
 
 if TYPE_CHECKING:
     from src.models.dbo.tables.contractor import Contractor
+    from src.models.dbo.tables.work import WorkType
 
 
 class ProjectClass(str, Enum):
@@ -99,13 +100,20 @@ class WfWorkforceNorm(IDMixin, Base):
 
     __tablename__ = "wf_norms"
 
-    work_type: Mapped[str] = mapped_column(String(255), nullable=False)
+    work_type_id: Mapped[UUID] = mapped_column(
+        sa.UUID,
+        ForeignKey("work_types.id", name="fk_wf_norms_work_type_id"),
+        nullable=False,
+        index=True,
+    )
     project_class: Mapped[str] = mapped_column(String(50), nullable=False)
     median_day_bdr: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
     median_month_bdr: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
     q1: Mapped[Optional[Decimal]] = mapped_column(Numeric(14, 2))
     q3: Mapped[Optional[Decimal]] = mapped_column(Numeric(14, 2))
     count: Mapped[Optional[int]] = mapped_column(Integer)
+
+    work_type: Mapped["WorkType"] = relationship(lazy="selectin")
 
 
 class WfBudgetPeriod(IDMixin, Base):
@@ -142,7 +150,12 @@ class WfBudgetItem(IDMixin, Base):
         ForeignKey("wf_project_objects.id", name="fk_wf_budget_items_object_id"),
         index=True,
     )
-    work_type: Mapped[str] = mapped_column(String(255), nullable=False)
+    work_type_id: Mapped[UUID] = mapped_column(
+        sa.UUID,
+        ForeignKey("work_types.id", name="fk_wf_budget_items_work_type_id"),
+        nullable=False,
+        index=True,
+    )
     detailed_article: Mapped[Optional[str]] = mapped_column(String(500))
     bdr_amount: Mapped[Decimal] = mapped_column(Numeric(16, 2), nullable=False)
     management_completion_amount: Mapped[Decimal] = mapped_column(Numeric(16, 2), nullable=False, default=0)
@@ -157,6 +170,7 @@ class WfBudgetItem(IDMixin, Base):
     budget_period: Mapped["WfBudgetPeriod"] = relationship(back_populates="items")
     project_object: Mapped[Optional["WfProjectObject"]] = relationship(back_populates="budget_items")
     contractor: Mapped[Optional["Contractor"]] = relationship()  # type: ignore[name-defined]
+    work_type: Mapped["WorkType"] = relationship(lazy="selectin")
 
 
 class WfHeadcountFact(IDMixin, Base):
@@ -175,7 +189,12 @@ class WfHeadcountFact(IDMixin, Base):
         ForeignKey("wf_project_objects.id", name="fk_wf_headcount_facts_object_id"),
         index=True,
     )
-    work_type: Mapped[str] = mapped_column(String(255), nullable=False)
+    work_type_id: Mapped[UUID] = mapped_column(
+        sa.UUID,
+        ForeignKey("work_types.id", name="fk_wf_headcount_facts_work_type_id"),
+        nullable=False,
+        index=True,
+    )
     fact_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     count: Mapped[int] = mapped_column(Integer, nullable=False)
     source: Mapped[str] = mapped_column(String(20), nullable=False, default=HeadcountSource.MANUAL)
@@ -188,6 +207,7 @@ class WfHeadcountFact(IDMixin, Base):
     project: Mapped["WfProject"] = relationship(back_populates="headcount_facts")
     project_object: Mapped[Optional["WfProjectObject"]] = relationship(back_populates="headcount_facts")
     contractor: Mapped[Optional["Contractor"]] = relationship()  # type: ignore[name-defined]
+    work_type: Mapped["WorkType"] = relationship(lazy="selectin")
 
 
 class WfHeadcountPlan(IDMixin, Base):
@@ -206,7 +226,12 @@ class WfHeadcountPlan(IDMixin, Base):
         ForeignKey("wf_project_objects.id", name="fk_wf_headcount_plans_object_id"),
         index=True,
     )
-    work_type: Mapped[str] = mapped_column(String(255), nullable=False)
+    work_type_id: Mapped[UUID] = mapped_column(
+        sa.UUID,
+        ForeignKey("work_types.id", name="fk_wf_headcount_plans_work_type_id"),
+        nullable=False,
+        index=True,
+    )
     period_month: Mapped[date] = mapped_column(Date, nullable=False)
     planned_count: Mapped[int] = mapped_column(Integer, nullable=False)
     contractor_id: Mapped[Optional[UUID]] = mapped_column(
@@ -218,6 +243,7 @@ class WfHeadcountPlan(IDMixin, Base):
     project: Mapped["WfProject"] = relationship(back_populates="headcount_plans")
     project_object: Mapped[Optional["WfProjectObject"]] = relationship(back_populates="headcount_plans")
     contractor: Mapped[Optional["Contractor"]] = relationship()  # type: ignore[name-defined]
+    work_type: Mapped["WorkType"] = relationship(lazy="selectin")
 
 
 class WfContractorAssignment(IDMixin, Base):
@@ -237,10 +263,16 @@ class WfContractorAssignment(IDMixin, Base):
         nullable=False,
         index=True,
     )
-    work_type: Mapped[str] = mapped_column(String(255), nullable=False)
+    work_type_id: Mapped[UUID] = mapped_column(
+        sa.UUID,
+        ForeignKey("work_types.id", name="fk_wf_contractor_assignments_work_type_id"),
+        nullable=False,
+        index=True,
+    )
 
     contractor: Mapped["Contractor"] = relationship()  # type: ignore[name-defined]
     project_object: Mapped["WfProjectObject"] = relationship(back_populates="contractor_assignments")
+    work_type: Mapped["WorkType"] = relationship(lazy="selectin")
 
 
 class WfChallenge(IDMixin, Base):
@@ -283,13 +315,19 @@ class WfChallengeItem(IDMixin, Base):
         nullable=False,
         index=True,
     )
-    work_type: Mapped[str] = mapped_column(String(255), nullable=False)
+    work_type_id: Mapped[UUID] = mapped_column(
+        sa.UUID,
+        ForeignKey("work_types.id", name="fk_wf_challenge_items_work_type_id"),
+        nullable=False,
+        index=True,
+    )
     system_baseline: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     requested_count: Mapped[int] = mapped_column(Integer, nullable=False)
     approved_count: Mapped[Optional[int]] = mapped_column(Integer)
     requires_mobilization_plan: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     challenge: Mapped["WfChallenge"] = relationship(back_populates="items")
+    work_type: Mapped["WorkType"] = relationship(lazy="selectin")
     mobilization_plans: Mapped[List["WfMobilizationPlan"]] = relationship(
         back_populates="challenge_item", cascade="all, delete-orphan"
     )
@@ -345,7 +383,14 @@ class WfArticleMapping(IDMixin, Base):
 
     article_code: Mapped[str] = mapped_column(String(50), nullable=False, unique=True, index=True)
     article_label: Mapped[str] = mapped_column(String(500), nullable=False)
-    work_type: Mapped[str] = mapped_column(String(255), nullable=False)
+    work_type_id: Mapped[UUID] = mapped_column(
+        sa.UUID,
+        ForeignKey("work_types.id", name="fk_wf_article_mapping_work_type_id"),
+        nullable=False,
+        index=True,
+    )
+
+    work_type: Mapped["WorkType"] = relationship(lazy="selectin")
 
 
 class WfViolation(IDMixin, Base):
@@ -365,7 +410,12 @@ class WfViolation(IDMixin, Base):
         nullable=False,
         index=True,
     )
-    work_type: Mapped[str] = mapped_column(String(255), nullable=False)
+    work_type_id: Mapped[UUID] = mapped_column(
+        sa.UUID,
+        ForeignKey("work_types.id", name="fk_wf_violations_work_type_id"),
+        nullable=False,
+        index=True,
+    )
     contractor_id: Mapped[Optional[UUID]] = mapped_column(
         sa.UUID,
         ForeignKey("contractors.id", name="fk_wf_violations_contractor_id"),
@@ -383,3 +433,4 @@ class WfViolation(IDMixin, Base):
     project: Mapped["WfProject"] = relationship()
     project_object: Mapped["WfProjectObject"] = relationship()
     contractor: Mapped[Optional["Contractor"]] = relationship()  # type: ignore[name-defined]
+    work_type: Mapped["WorkType"] = relationship(lazy="selectin")

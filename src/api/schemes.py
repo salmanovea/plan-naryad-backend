@@ -14,7 +14,7 @@ from typing import (
 
 
 from fastapi import Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 T = TypeVar("T")
 
@@ -236,6 +236,8 @@ class ListDataResponseSchema(Response200Schema, Generic[T]):
 
 
 class NamedEntitySchema(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: Optional[UUID] = None
     name: Optional[str] = None
 

@@ -6,7 +6,7 @@ from uuid import UUID
 from fastapi import Query
 from pydantic import BaseModel, ConfigDict
 
-from src.api.schemes import IDMixinSchema
+from src.api.schemes import IDMixinSchema, NamedEntitySchema
 from src.models.dbo.tables.workforce import ChallengeStatus, HeadcountSource, ProjectClass, ViolationType
 
 # Re-export dashboard DTOs from service layer
@@ -66,7 +66,7 @@ class WfProjectObjectSchema(IDMixinSchema):
 
 
 class CreateWfWorkforceNormRequest(BaseModel):
-    work_type: str
+    work_type_id: UUID
     project_class: ProjectClass
     median_day_bdr: Decimal
     median_month_bdr: Decimal
@@ -78,7 +78,7 @@ class CreateWfWorkforceNormRequest(BaseModel):
 class WfWorkforceNormSchema(IDMixinSchema):
     model_config = ConfigDict(from_attributes=True)
 
-    work_type: str
+    work_type: NamedEntitySchema
     project_class: str
     median_day_bdr: Decimal
     median_month_bdr: Decimal
@@ -93,7 +93,7 @@ class WfWorkforceNormSchema(IDMixinSchema):
 class CreateWfHeadcountFactRequest(BaseModel):
     project_id: UUID
     object_id: Optional[UUID] = None
-    work_type: str
+    work_type_id: UUID
     fact_date: date
     count: int
     source: HeadcountSource = HeadcountSource.MANUAL
@@ -105,7 +105,7 @@ class WfHeadcountFactSchema(IDMixinSchema):
 
     project_id: UUID
     object_id: Optional[UUID] = None
-    work_type: str
+    work_type: NamedEntitySchema
     fact_date: date
     count: int
     source: str
@@ -118,7 +118,7 @@ class WfHeadcountFactSchema(IDMixinSchema):
 class CreateWfHeadcountPlanRequest(BaseModel):
     project_id: UUID
     object_id: Optional[UUID] = None
-    work_type: str
+    work_type_id: UUID
     period_month: date
     planned_count: int
     contractor_id: Optional[UUID] = None
@@ -129,7 +129,7 @@ class WfHeadcountPlanSchema(IDMixinSchema):
 
     project_id: UUID
     object_id: Optional[UUID] = None
-    work_type: str
+    work_type: NamedEntitySchema
     period_month: date
     planned_count: int
     contractor_id: Optional[UUID] = None
@@ -139,7 +139,7 @@ class WfHeadcountPlanSchema(IDMixinSchema):
 
 
 class CreateChallengeItemRequest(BaseModel):
-    work_type: str
+    work_type_id: UUID
     system_baseline: int = 0
     requested_count: int
     approved_count: Optional[int] = None
@@ -164,7 +164,7 @@ class ChallengeItemSchema(IDMixinSchema):
     model_config = ConfigDict(from_attributes=True)
 
     challenge_id: UUID
-    work_type: str
+    work_type: NamedEntitySchema
     system_baseline: int
     requested_count: int
     approved_count: Optional[int] = None
@@ -189,7 +189,7 @@ class ChallengeSchema(IDMixinSchema):
 class CreateViolationRequest(BaseModel):
     project_id: UUID
     object_id: UUID
-    work_type: str
+    work_type_id: UUID
     contractor_id: Optional[UUID] = None
     violation_date: date
     violation_type: ViolationType
@@ -210,7 +210,7 @@ class UpdateViolationRequest(BaseModel):
 class CreateArticleMappingRequest(BaseModel):
     article_code: str
     article_label: str
-    work_type: str
+    work_type_id: UUID
 
 
 class ArticleMappingSchema(IDMixinSchema):
@@ -218,7 +218,7 @@ class ArticleMappingSchema(IDMixinSchema):
 
     article_code: str
     article_label: str
-    work_type: str
+    work_type: NamedEntitySchema
 
 
 class ArticleMappingBulkRequest(BaseModel):

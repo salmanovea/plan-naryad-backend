@@ -133,7 +133,7 @@ class WfArticleMappingManager(BaseManager[WfArticleMapping]):
     """Data access for WfArticleMapping entities."""
 
     entity = WfArticleMapping
-    text_search_fields = {"article_code": "ilike", "article_label": "ilike", "work_type": "ilike"}
+    text_search_fields = {"article_code": "ilike", "article_label": "ilike"}
 
     def __init__(self, db: AsyncSession):
         super().__init__(db)

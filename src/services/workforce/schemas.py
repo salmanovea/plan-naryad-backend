@@ -7,6 +7,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
+from src.api.schemes import NamedEntitySchema
+
 
 class WfProjectOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -18,7 +20,7 @@ class WfProjectOut(BaseModel):
 
 
 class WorkTypeRow(BaseModel):
-    work_type: str
+    work_type: NamedEntitySchema
     bdr_amount: Decimal
     management_completion_amount: Decimal
     uv_pct: float
@@ -93,7 +95,7 @@ class ProjectDetailResponse(BaseModel):
 class ForecastRow(BaseModel):
     object_id: UUID
     object_name: str
-    work_type: str
+    work_type: NamedEntitySchema
     remaining_amount: Optional[Decimal]
     planned_end_date: Optional[date]
     fact_30d: float
@@ -111,14 +113,14 @@ class ForecastResponse(BaseModel):
 class ContractorHeadcountRow(BaseModel):
     contractor_id: Optional[UUID]
     contractor_name: str
-    work_type: str
+    work_type: NamedEntitySchema
     plan: Optional[int]
     fact_30d: float
     coverage_pct: Optional[float]
 
 
 class SystemProblemRow(BaseModel):
-    work_type: str
+    work_type: NamedEntitySchema
     affected_objects: int
     avg_coverage_pct: Optional[float]
     object_names: List[str]
@@ -145,7 +147,7 @@ class ViolationOut(BaseModel):
     id: UUID
     project_id: UUID
     object_id: UUID
-    work_type: str
+    work_type: NamedEntitySchema
     contractor_id: Optional[UUID] = None
     violation_date: date
     violation_type: str

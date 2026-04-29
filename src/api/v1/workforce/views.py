@@ -231,7 +231,7 @@ async def delete_project_object(
 async def list_norms(
     service: WorkforceService = Depends(get_workforce_service),
 ) -> ListDataResponseSchema[WfWorkforceNormSchema]:
-    items = await service.wf_workforce_norm_manager.search(order_by=["work_type"])
+    items = await service.wf_workforce_norm_manager.search(order_by=["work_type_id"])
     return ListDataResponseSchema[WfWorkforceNormSchema].create(
         list_data=[WfWorkforceNormSchema.model_validate(i) for i in items],
     )
