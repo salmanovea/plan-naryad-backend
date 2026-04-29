@@ -347,9 +347,15 @@ class WfMobilizationPlan(IDMixin, Base):
     planned_date: Mapped[date] = mapped_column(Date, nullable=False)
     action: Mapped[str] = mapped_column(String(500), nullable=False)
     headcount_delta: Mapped[int] = mapped_column(Integer, nullable=False)
-    contractor_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    contractor_id: Mapped[UUID] = mapped_column(
+        sa.UUID,
+        ForeignKey("contractors.id", name="fk_wf_mobilization_plans_contractor_id"),
+        nullable=False,
+        index=True,
+    )
 
     challenge_item: Mapped["WfChallengeItem"] = relationship(back_populates="mobilization_plans")
+    contractor: Mapped["Contractor"] = relationship()  # type: ignore[name-defined]
     checkpoints: Mapped[List["WfMobilizationCheckpoint"]] = relationship(
         back_populates="mobilization_plan", cascade="all, delete-orphan"
     )

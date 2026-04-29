@@ -54,8 +54,19 @@ All `work_type` fields in GET responses are now named entity objects instead of 
 
 ---
 
+---
+
+## WfMobilizationPlan — `contractor_name` → `contractor_id`
+
+`WfMobilizationPlan` previously stored the contractor as a free-text name. It now references a contractor by UUID FK.
+
+There are currently no public API endpoints that create or return mobilization plans directly — they are managed internally as part of the challenge workflow. When such endpoints are added, the request body must supply `contractor_id: UUID` (not `contractor_name: string`), and GET responses will return `contractor: { id, name }`.
+
+---
+
 ## Checklist
 
 - [ ] Replace `work_type: string` with `work_type_id: UUID` in all workforce POST/PUT request payloads
 - [ ] Update response parsing: read `work_type.id` and `work_type.name` instead of a flat `work_type_id` UUID
 - [ ] Remove any client-side `id → name` lookup maps built from a separate `GET /api/v1/works/types` call — the name is now included inline in every response
+- [ ] When mobilization plan endpoints are introduced: send `contractor_id: UUID` instead of `contractor_name: string`
