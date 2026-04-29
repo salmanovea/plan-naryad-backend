@@ -76,4 +76,4 @@ class ContractorAssignmentAdmin(BaseAdmin, model=ContractorAssignment):  # type:
         ContractorAssignment.work_group,
         ContractorAssignment.work_type_ids,
     ]
-    column_sortable_list = []
+    column_sortable_list: list = []

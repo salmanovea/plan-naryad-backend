@@ -456,9 +456,9 @@ class WorkforceService(BaseService):
         )
         fact_rows = await self.wf_headcount_fact_manager.fetch(fact_q, with_scalars=False)
 
-        plan_q = select(WfHeadcountPlan.contractor_id, WfHeadcountPlan.work_type_id, WfHeadcountPlan.planned_count).where(
-            WfHeadcountPlan.object_id == object_id, WfHeadcountPlan.period_month == period
-        )
+        plan_q = select(
+            WfHeadcountPlan.contractor_id, WfHeadcountPlan.work_type_id, WfHeadcountPlan.planned_count
+        ).where(WfHeadcountPlan.object_id == object_id, WfHeadcountPlan.period_month == period)
         plan_rows = await self.wf_headcount_plan_manager.fetch(plan_q, with_scalars=False)
         plan_map = {(r.contractor_id, r.work_type_id): r.planned_count for r in plan_rows}
 

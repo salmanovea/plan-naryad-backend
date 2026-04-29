@@ -426,7 +426,6 @@ class WfMobilizationCheckpoint(IDMixin, Base):
     mobilization_plan: Mapped["WfMobilizationPlan"] = relationship(back_populates="checkpoints")
 
 
-
 class WfViolation(IDMixin, Base):
     """Recorded workforce violation."""
 

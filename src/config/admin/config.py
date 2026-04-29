@@ -5,7 +5,12 @@ from src.config.admin.model_admin.contractor import ContractorAdmin, ContractorA
 from src.config.admin.model_admin.housing import FloorAdmin, HousingAdmin, SectionAdmin
 from src.config.admin.model_admin.sync_actions import SyncActionsAdmin
 from src.config.admin.model_admin.work import WorkGroupAdmin, WorkTypeAdmin
-from src.config.admin.model_admin.workforce import ArticleBDRAdmin, WfArticleMappingAdmin, WfProjectAdmin, WfProjectObjectAdmin
+from src.config.admin.model_admin.workforce import (
+    ArticleBDRAdmin,
+    WfArticleMappingAdmin,
+    WfProjectAdmin,
+    WfProjectObjectAdmin,
+)
 from src.config.postgres.db_config import async_engine
 
 

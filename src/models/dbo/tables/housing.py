@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
 from uuid import UUID
 
 from sqlalchemy import ForeignKey, Integer, String
@@ -7,6 +7,9 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.dbo.mixins import IDMixin, RaportMixin
 from src.models.dbo.base_model import Base
+
+if TYPE_CHECKING:
+    from src.models.dbo.tables.workforce import WfProjectObject
 
 
 class Housing(IDMixin, RaportMixin, Base):
