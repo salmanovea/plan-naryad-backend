@@ -18,7 +18,6 @@ from src.config.admin.config import init_admin
 from src.config.logger import LoggerProvider
 from src.config.postgres.db_config import async_engine
 from src.config.settings import app_config
-from src.models.dbo.models import Base
 
 log = LoggerProvider().get_logger(__name__)
 
@@ -26,9 +25,6 @@ log = LoggerProvider().get_logger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     log.info("Starting Plan-naryad API...")
-    async with async_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    log.info("Database tables ready")
     yield
     log.info("Shutting down Plan-naryad API...")
     await async_engine.dispose()

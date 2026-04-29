@@ -86,6 +86,7 @@ class WorkforceService(BaseService):
         self.wf_mobilization_plan_manager = managers.WfMobilizationPlanManager(db)
         self.wf_mobilization_checkpoint_manager = managers.WfMobilizationCheckpointManager(db)
         self.wf_violation_manager = managers.WfViolationManager(db)
+        self.article_bdr_manager = managers.ArticleBDRManager(db)
         self.wf_article_mapping_manager = managers.WfArticleMappingManager(db)
 
     async def _get_work_types_map(self, work_type_ids: Iterable[UUID]) -> Dict[UUID, NamedEntitySchema]:

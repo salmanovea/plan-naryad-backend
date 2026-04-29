@@ -134,6 +134,44 @@ class WfBudgetPeriod(IDMixin, Base):
     items: Mapped[List["WfBudgetItem"]] = relationship(back_populates="budget_period", cascade="all, delete-orphan")
 
 
+class ArticleBDR(IDMixin, Base):
+    """Master table for 1C budget articles."""
+
+    __tablename__ = "article_bdrs"
+
+    code_1c: Mapped[str] = mapped_column(String(50), nullable=False, unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(500), nullable=False)
+
+    def __str__(self) -> str:
+        return f"{self.code_1c} — {self.name}"
+
+    mappings: Mapped[List["WfArticleMapping"]] = relationship(
+        back_populates="article_bdr", cascade="all, delete-orphan"
+    )
+
+
+class WfArticleMapping(IDMixin, Base):
+    """M2M link between a 1C budget article and a work type."""
+
+    __tablename__ = "wf_article_mapping"
+
+    article_bdr_id: Mapped[UUID] = mapped_column(
+        sa.UUID,
+        ForeignKey("article_bdrs.id", name="fk_wf_article_mapping_article_bdr_id"),
+        nullable=False,
+        index=True,
+    )
+    work_type_id: Mapped[UUID] = mapped_column(
+        sa.UUID,
+        ForeignKey("work_types.id", name="fk_wf_article_mapping_work_type_id"),
+        nullable=False,
+        index=True,
+    )
+
+    article_bdr: Mapped["ArticleBDR"] = relationship(back_populates="mappings")
+    work_type: Mapped["WorkType"] = relationship(lazy="selectin")
+
+
 class WfBudgetItem(IDMixin, Base):
     """Budget line (work type, BDR, UV)."""
 
@@ -156,7 +194,12 @@ class WfBudgetItem(IDMixin, Base):
         nullable=False,
         index=True,
     )
-    detailed_article: Mapped[Optional[str]] = mapped_column(String(500))
+    article_bdr_id: Mapped[Optional[UUID]] = mapped_column(
+        sa.UUID,
+        ForeignKey("article_bdrs.id", name="fk_wf_budget_items_article_bdr_id"),
+        nullable=True,
+        index=True,
+    )
     bdr_amount: Mapped[Decimal] = mapped_column(Numeric(16, 2), nullable=False)
     management_completion_amount: Mapped[Decimal] = mapped_column(Numeric(16, 2), nullable=False, default=0)
     contractor_id: Mapped[Optional[UUID]] = mapped_column(
@@ -171,6 +214,7 @@ class WfBudgetItem(IDMixin, Base):
     project_object: Mapped[Optional["WfProjectObject"]] = relationship(back_populates="budget_items")
     contractor: Mapped[Optional["Contractor"]] = relationship()  # type: ignore[name-defined]
     work_type: Mapped["WorkType"] = relationship(lazy="selectin")
+    article_bdr: Mapped[Optional["ArticleBDR"]] = relationship()
 
 
 class WfHeadcountFact(IDMixin, Base):
@@ -381,22 +425,6 @@ class WfMobilizationCheckpoint(IDMixin, Base):
 
     mobilization_plan: Mapped["WfMobilizationPlan"] = relationship(back_populates="checkpoints")
 
-
-class WfArticleMapping(IDMixin, Base):
-    """Mapping of a detailed 1C budget article to an aggregated work type."""
-
-    __tablename__ = "wf_article_mapping"
-
-    article_code: Mapped[str] = mapped_column(String(50), nullable=False, unique=True, index=True)
-    article_label: Mapped[str] = mapped_column(String(500), nullable=False)
-    work_type_id: Mapped[UUID] = mapped_column(
-        sa.UUID,
-        ForeignKey("work_types.id", name="fk_wf_article_mapping_work_type_id"),
-        nullable=False,
-        index=True,
-    )
-
-    work_type: Mapped["WorkType"] = relationship(lazy="selectin")
 
 
 class WfViolation(IDMixin, Base):

@@ -6,6 +6,7 @@ from src.models.managers.fact import WorkFactManager
 from src.models.managers.reconciliation import DailySummaryManager, ReconciliationResultManager
 from src.models.managers.alert import AlertManager
 from src.models.managers.workforce import (
+    ArticleBDRManager,
     WfArticleMappingManager,
     WfBudgetItemManager,
     WfBudgetPeriodManager,

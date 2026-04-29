@@ -56,6 +56,62 @@ All `work_type` fields in GET responses are now named entity objects instead of 
 
 ---
 
+## ArticleBDR — replaces `/article-mappings` endpoints
+
+The `wf_article_mapping` table is replaced by a new master table `article_bdrs`. All `/article-mappings` API routes are gone; use `/article-bdrs` instead.
+
+### Renamed / restructured endpoints
+
+| Old endpoint | New endpoint |
+|---|---|
+| `GET /api/v1/workforce/article-mappings` | `GET /api/v1/workforce/article-bdrs` |
+| `POST /api/v1/workforce/article-mappings` | `POST /api/v1/workforce/article-bdrs` |
+| `POST /api/v1/workforce/article-mappings/bulk` | `POST /api/v1/workforce/article-bdrs/bulk` |
+| `DELETE /api/v1/workforce/article-mappings/{id}` | `DELETE /api/v1/workforce/article-bdrs/{id}` |
+
+### Changed request body fields
+
+| Old field | New field | Endpoint |
+|---|---|---|
+| `article_code: string` | `code_1c: string` | `POST /article-bdrs`, bulk `items[]` |
+| `article_label: string` | `name: string` | `POST /article-bdrs`, bulk `items[]` |
+| `work_type_id: UUID` | `work_type_id: UUID` | unchanged |
+
+**New request shape:**
+```json
+{
+  "code_1c": "10.01.001",
+  "name": "Монолитные работы — фундамент",
+  "work_type_id": "3fa85f64-..."
+}
+```
+
+### Changed response schema
+
+`ArticleMappingSchema` → `ArticleBDRSchema`:
+
+| Old field | New field |
+|---|---|
+| `article_code: string` | `code_1c: string` |
+| `article_label: string` | `name: string` |
+| `work_type: { id, name }` | `work_type: { id, name }` (unchanged) |
+
+**New response shape:**
+```json
+{
+  "id": "uuid",
+  "code_1c": "10.01.001",
+  "name": "Монолитные работы — фундамент",
+  "work_type": { "id": "uuid", "name": "Монолитные работы" }
+}
+```
+
+### WfBudgetItem — `detailed_article` removed
+
+`WfBudgetItem.detailed_article` (string) is removed from all budget-related responses. Budget items now link to articles via `article_bdr_id` (FK, not returned in API by default).
+
+---
+
 ## WfMobilizationPlan — `contractor_name` → `contractor_id`
 
 `WfMobilizationPlan` previously stored the contractor as a free-text name. It now references a contractor by UUID FK.

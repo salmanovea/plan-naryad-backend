@@ -15,6 +15,7 @@ from src.models.dbo.tables.reconciliation import (  # noqa: F401
 )
 from src.models.dbo.tables.work import DependencyType, TechSequenceItem, WorkGroup, WorkType  # noqa: F401
 from src.models.dbo.tables.workforce import (  # noqa: F401
+    ArticleBDR,
     WfArticleMapping,
     WfBudgetItem,
     WfBudgetPeriod,

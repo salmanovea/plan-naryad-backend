@@ -2,11 +2,57 @@ from fastapi import Request
 from sqladmin import action
 from starlette.responses import RedirectResponse, Response
 
-from src.config.admin.categories import CATEGORY_PROJECT_STRUCTURE
+from src.config.admin.categories import CATEGORY_PROJECT_STRUCTURE, CATEGORY_WORKFORCE
 from src.config.admin.model_admin.base_admin import BaseAdmin
 from src.config.postgres.db_config import get_async_session
-from src.models.dbo.tables.workforce import WfProject, WfProjectObject
+from src.models.dbo.tables.workforce import ArticleBDR, WfArticleMapping, WfProject, WfProjectObject
 from src.services.sync.service import SyncService
+
+
+class ArticleBDRAdmin(BaseAdmin, model=ArticleBDR):  # type: ignore[call-arg]
+    category = CATEGORY_WORKFORCE
+    name = "Статья БДР"
+    name_plural = "Статьи БДР"
+    icon = "fa-solid fa-file-invoice"
+
+    column_list = [
+        ArticleBDR.id,
+        ArticleBDR.code_1c,
+        ArticleBDR.name,
+    ]
+    column_details_list = [
+        ArticleBDR.id,
+        ArticleBDR.code_1c,
+        ArticleBDR.name,
+    ]
+    form_columns = [
+        ArticleBDR.code_1c,
+        ArticleBDR.name,
+    ]
+    column_searchable_list = [ArticleBDR.code_1c, ArticleBDR.name]
+    column_sortable_list = [ArticleBDR.code_1c, ArticleBDR.name]
+
+
+class WfArticleMappingAdmin(BaseAdmin, model=WfArticleMapping):  # type: ignore[call-arg]
+    category = CATEGORY_WORKFORCE
+    name = "Привязка статьи к типу работ"
+    name_plural = "Привязки статей к типам работ"
+    icon = "fa-solid fa-link"
+
+    column_list = [
+        WfArticleMapping.id,
+        WfArticleMapping.article_bdr_id,
+        WfArticleMapping.work_type_id,
+    ]
+    column_details_list = [
+        WfArticleMapping.id,
+        WfArticleMapping.article_bdr,
+        WfArticleMapping.work_type,
+    ]
+    form_columns = [
+        WfArticleMapping.article_bdr,
+        WfArticleMapping.work_type,
+    ]
 
 
 class WfProjectAdmin(BaseAdmin, model=WfProject):  # type: ignore[call-arg]

@@ -204,25 +204,38 @@ class UpdateViolationRequest(BaseModel):
     resolved: Optional[bool] = None
 
 
-# ── ArticleMapping ────────────────────────────────────────────────────────────
+# ── ArticleBDR ────────────────────────────────────────────────────────────────
+
+
+class CreateArticleBDRRequest(BaseModel):
+    code_1c: str
+    name: str
+
+
+class ArticleBDRSchema(IDMixinSchema):
+    model_config = ConfigDict(from_attributes=True)
+
+    code_1c: str
+    name: str
+
+
+class ArticleBDRBulkRequest(BaseModel):
+    items: List[CreateArticleBDRRequest]
+
+
+# ── ArticleMapping (ArticleBDR ↔ WorkType) ────────────────────────────────────
 
 
 class CreateArticleMappingRequest(BaseModel):
-    article_code: str
-    article_label: str
+    article_bdr_id: UUID
     work_type_id: UUID
 
 
 class ArticleMappingSchema(IDMixinSchema):
     model_config = ConfigDict(from_attributes=True)
 
-    article_code: str
-    article_label: str
+    article_bdr_id: UUID
     work_type: NamedEntitySchema
-
-
-class ArticleMappingBulkRequest(BaseModel):
-    items: List[CreateArticleMappingRequest]
 
 
 class UnmappedArticleSchema(BaseModel):

@@ -11,9 +11,11 @@ from src.api.schemes import (
     ResponseGroup,
 )
 from src.api.v1.workforce.schemes import (
-    ArticleMappingBulkRequest,
+    ArticleBDRBulkRequest,
+    ArticleBDRSchema,
     ArticleMappingSchema,
     ChallengeSchema,
+    CreateArticleBDRRequest,
     CreateArticleMappingRequest,
     CreateChallengeRequest,
     CreateViolationRequest,
@@ -454,15 +456,64 @@ async def auto_escalate_violations(
     return DataResponseSchema[dict](data={"escalated": count})
 
 
+# ── ArticleBDR ────────────────────────────────────────────────────────────────
+
+
+@workforce_router.get("/article-bdrs", responses=get_responses(ResponseGroup.ALL_ERRORS))
+@catch_all_exceptions
+async def list_article_bdrs(
+    service: WorkforceService = Depends(get_workforce_service),
+) -> ListDataResponseSchema[ArticleBDRSchema]:
+    items = await service.article_bdr_manager.search(order_by=["code_1c"])
+    return ListDataResponseSchema[ArticleBDRSchema].create(
+        list_data=[ArticleBDRSchema.model_validate(i) for i in items],
+    )
+
+
+@workforce_router.post("/article-bdrs", responses=get_responses(ResponseGroup.ALL_ERRORS), status_code=201)
+@catch_all_exceptions
+async def create_article_bdr(
+    body: CreateArticleBDRRequest,
+    service: WorkforceService = Depends(get_workforce_service),
+) -> DataResponseSchema[ArticleBDRSchema]:
+    item = await service.article_bdr_manager.create(body.model_dump())
+    return DataResponseSchema[ArticleBDRSchema](data=ArticleBDRSchema.model_validate(item))
+
+
+@workforce_router.post("/article-bdrs/bulk", responses=get_responses(ResponseGroup.ALL_ERRORS), status_code=201)
+@catch_all_exceptions
+async def bulk_create_article_bdrs(
+    body: ArticleBDRBulkRequest,
+    service: WorkforceService = Depends(get_workforce_service),
+) -> DataResponseSchema[dict]:
+    data = [item.model_dump() for item in body.items]
+    await service.article_bdr_manager.bulk_insert(data, is_commit=True)
+    return DataResponseSchema[dict](data={"created": len(data)})
+
+
+@workforce_router.delete("/article-bdrs/{article_bdr_id}", responses=get_responses(ResponseGroup.ALL_ERRORS))
+@catch_all_exceptions
+async def delete_article_bdr(
+    article_bdr_id: UUID,
+    service: WorkforceService = Depends(get_workforce_service),
+) -> DataResponseSchema[dict]:
+    await service.article_bdr_manager.delete_by_id(article_bdr_id)
+    return DataResponseSchema[dict](data={"deleted": str(article_bdr_id)})
+
+
 # ── ArticleMapping ────────────────────────────────────────────────────────────
 
 
 @workforce_router.get("/article-mappings", responses=get_responses(ResponseGroup.ALL_ERRORS))
 @catch_all_exceptions
 async def list_article_mappings(
+    article_bdr_id: Optional[UUID] = Query(None),
     service: WorkforceService = Depends(get_workforce_service),
 ) -> ListDataResponseSchema[ArticleMappingSchema]:
-    items = await service.wf_article_mapping_manager.search(order_by=["article_code"])
+    filters: dict = {}
+    if article_bdr_id:
+        filters["article_bdr_id"] = article_bdr_id
+    items = await service.wf_article_mapping_manager.search(**filters)
     return ListDataResponseSchema[ArticleMappingSchema].create(
         list_data=[ArticleMappingSchema.model_validate(i) for i in items],
     )
@@ -476,17 +527,6 @@ async def create_article_mapping(
 ) -> DataResponseSchema[ArticleMappingSchema]:
     item = await service.wf_article_mapping_manager.create(body.model_dump())
     return DataResponseSchema[ArticleMappingSchema](data=ArticleMappingSchema.model_validate(item))
-
-
-@workforce_router.post("/article-mappings/bulk", responses=get_responses(ResponseGroup.ALL_ERRORS), status_code=201)
-@catch_all_exceptions
-async def bulk_create_article_mappings(
-    body: ArticleMappingBulkRequest,
-    service: WorkforceService = Depends(get_workforce_service),
-) -> DataResponseSchema[dict]:
-    data = [item.model_dump() for item in body.items]
-    await service.wf_article_mapping_manager.bulk_insert(data, is_commit=True)
-    return DataResponseSchema[dict](data={"created": len(data)})
 
 
 @workforce_router.delete("/article-mappings/{mapping_id}", responses=get_responses(ResponseGroup.ALL_ERRORS))
