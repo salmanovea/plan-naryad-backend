@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   db:
     image: postgres:16
@@ -22,16 +20,19 @@ services:
     build: .
     restart: always
     ports:
-      - "8090:8000"
+      - "8090:8090"
     environment:
-      DATABASE_URL: postgresql+asyncpg://pn_user:pn_secret@db:5432/plan_naryad
-      PYTHONPATH: /app
+      PORT: "8090"
+      DB_DRIVER_NAME: postgresql+asyncpg
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: plan_naryad
+      DB_USER: pn_user
+      DB_PASS: pn_secret
+      PROJECT_PORT: "8090"
     depends_on:
       db:
         condition: service_healthy
-    volumes:
-      - ./app:/app/app
-    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 
 volumes:
   pgdata:
