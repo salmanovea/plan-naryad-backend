@@ -1,0 +1,20 @@
+[
+  {
+    "id": "99999999-9999-9999-9999-999999999999",
+    "name": "ООО Стройтест",
+    "short_name": "Стройтест",
+    "inn": "1234567890",
+    "contact_person": "Иванов И.И.",
+    "phone": "+79001234567",
+    "email": "test@stroy.ru"
+  },
+  {
+    "id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+    "name": "ИП Петров",
+    "short_name": "Петров",
+    "inn": null,
+    "contact_person": null,
+    "phone": null,
+    "email": null
+  }
+]

@@ -1,0 +1,18 @@
+[
+  {
+    "id": "88888888-8888-8888-8888-888888888888",
+    "group_id": "77777777-7777-7777-7777-777777777777",
+    "name": "Монолит",
+    "code": "MONOLITH",
+    "unit": "м3",
+    "description": null
+  },
+  {
+    "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+    "group_id": "77777777-7777-7777-7777-777777777777",
+    "name": "Кладка",
+    "code": "MASONRY",
+    "unit": "м2",
+    "description": null
+  }
+]
