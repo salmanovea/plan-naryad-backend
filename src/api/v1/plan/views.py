@@ -41,7 +41,7 @@ async def list_plan_items(
     if date_to:
         filter_data["date__lte"] = date_to
 
-    items = await service.plan_item_manager.search(order_by=["-date"], **filter_data)
+    items = await service.plan_item_manager.search(order_by=["-date"], pagination=pagination, **filter_data)
     total = await service.plan_item_manager.count(**filter_data)
     return ListDataResponseSchema[PlanItemSchema].create(
         list_data=[PlanItemSchema.model_validate(i) for i in items],

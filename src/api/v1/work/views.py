@@ -97,7 +97,9 @@ async def list_work_types(
 ) -> ListDataResponseSchema[WorkTypeSchema]:
     filter_data = filters.model_dump(exclude_none=True)
     search_text = filter_data.pop("search", None)
-    items = await service.work_type_manager.search(search=search_text, order_by=["name"], **filter_data)
+    items = await service.work_type_manager.search(
+        search=search_text, order_by=["name"], pagination=pagination, **filter_data
+    )
     total = await service.work_type_manager.count(search=search_text, **filter_data)
     return ListDataResponseSchema[WorkTypeSchema].create(
         list_data=[WorkTypeSchema.model_validate(i) for i in items],
