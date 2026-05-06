@@ -124,20 +124,41 @@ class AutogenerationService(BaseService):
         completed = progress[key].get("actual_volume", Decimal("0")) if key in progress else Decimal("0")
         return daily_norm, min(daily_norm, total_volume - completed)
 
-    async def generate_daily_plan(self, housing_id: UUID, target_date: date) -> List:
+    async def generate_daily_plan(self, housing_id: UUID, target_date: date) -> Tuple[List, List[str]]:
+        """Generate a day plan, returns (items, reasons).
+
+        `reasons` is a human-readable list of diagnostic strings explaining
+        why the plan ended up empty (no tech_sequence, no contractor
+        assignments, weekend, etc.). Empty when items were generated.
+        """
+        reasons: List[str] = []
+
         if target_date.weekday() >= 5:
-            return []
+            reasons.append("Дата приходится на выходной — план не генерируется.")
+            return [], reasons
 
         existing = await self.plan_item_manager.search(housing_id=housing_id, date=target_date)
         if existing:
-            return existing
+            return existing, reasons
 
         housing = await self.housing_manager.get_by_id(housing_id)
         if not housing:
-            return []
+            reasons.append("Корпус с таким id не найден.")
+            return [], reasons
 
         sections = await self.section_manager.search(housing_id=housing_id, order_by=["section_number"])
         tech_sequence_items = await self.tech_sequence_manager.search(housing_id=housing_id, order_by=["order"])
+
+        if not sections:
+            reasons.append("У корпуса нет секций.")
+        if not tech_sequence_items:
+            reasons.append(
+                "Не настроена техпоследовательность работ для корпуса. "
+                "Добавьте записи в tech_sequence_items (POST /api/v1/works/tech-sequence)."
+            )
+
+        if not sections or not tech_sequence_items:
+            return [], reasons
 
         tech_sequence: List[Dict] = []
         prev_work_type_id = None
@@ -183,32 +204,46 @@ class AutogenerationService(BaseService):
         contractor_counts: Dict[UUID, int] = {}
         max_per_contractor = app_config.max_items_per_contractor
 
+        # Счётчики причин отказа на уровне (work_type × section × floor) —
+        # если ничего не сгенерировалось, агрегированные числа покажут,
+        # на чём именно застрял генератор.
+        skipped_no_contractor = 0
+        skipped_zero_volume = 0
+        skipped_dependency = 0
+        skipped_contractor_cap = 0
+        skipped_unknown_work_type = 0
+
         for section in sections:
             floors = await self.floor_manager.search(section_id=section.id, order_by=["floor_number"])
             for floor in floors:
                 for seq_item in tech_sequence:
                     work_type_id = seq_item["work_type_id"]
                     if not self._is_available(section.id, floor.id, work_type_id, tech_sequence, progress):
+                        skipped_dependency += 1
                         continue
 
                     work_type = await self.work_type_manager.get_by_id(work_type_id)
                     if not work_type:
+                        skipped_unknown_work_type += 1
                         continue
 
                     contractor_id = await self._assign_contractor(
                         housing_id, section.id, work_type_id, work_type.group_id
                     )
                     if not contractor_id:
+                        skipped_no_contractor += 1
                         continue
 
                     contractor_counts.setdefault(contractor_id, 0)
                     if contractor_counts[contractor_id] >= max_per_contractor:
+                        skipped_contractor_cap += 1
                         continue
 
                     _, daily_volume = self._calculate_daily_volume(
                         work_type_id, section.id, floor.id, tech_sequence, progress
                     )
                     if daily_volume <= Decimal("0"):
+                        skipped_zero_volume += 1
                         continue
 
                     plan_items_data.append(
@@ -229,8 +264,36 @@ class AutogenerationService(BaseService):
 
         if plan_items_data:
             await self.plan_item_manager.bulk_insert(plan_items_data, is_commit=True)
+            return (
+                await self.plan_item_manager.search(housing_id=housing_id, date=target_date),
+                reasons,
+            )
 
-        return await self.plan_item_manager.search(housing_id=housing_id, date=target_date)
+        # Ничего не сгенерировано — выкатываем читаемый разбор причин.
+        if skipped_no_contractor:
+            reasons.append(
+                f"Не назначен подрядчик для {skipped_no_contractor} (work_type × section). "
+                "Добавьте contractor_assignments через UI «Подрядчики на корпусе» или "
+                "POST /api/v1/contractors/assignments."
+            )
+        if skipped_dependency:
+            reasons.append(
+                f"{skipped_dependency} позиций отложены: предшествующая работа ещё не "
+                "завершена (зависимость в техпоследовательности)."
+            )
+        if skipped_zero_volume:
+            reasons.append(f"{skipped_zero_volume} позиций имеют 0 дневной объём (work_type настроен с нулём).")
+        if skipped_contractor_cap:
+            reasons.append(
+                f"{skipped_contractor_cap} позиций отброшено по лимиту max_items_per_contractor={max_per_contractor}."
+            )
+        if skipped_unknown_work_type:
+            reasons.append(f"{skipped_unknown_work_type} позиций ссылаются на несуществующий work_type.")
+
+        if not reasons:
+            reasons.append("Не удалось собрать ни одной позиции — данные настроены, но не подходят под фильтры.")
+
+        return [], reasons
 
 
 async def get_plan_service(db: AsyncSession = Depends(get_session)) -> AutogenerationService:
