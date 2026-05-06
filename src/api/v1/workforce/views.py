@@ -129,7 +129,9 @@ async def list_projects(
 ) -> ListDataResponseSchema[WfProjectOut]:
     filter_data = filters.model_dump(exclude_none=True)
     search_text = filter_data.pop("search", None)
-    items = await service.wf_project_manager.search(search=search_text, order_by=["name"], **filter_data)
+    items = await service.wf_project_manager.search(
+        search=search_text, order_by=["name"], pagination=pagination, **filter_data
+    )
     total = await service.wf_project_manager.count(search=search_text, **filter_data)
     return ListDataResponseSchema[WfProjectOut].create(
         list_data=[WfProjectOut.model_validate(i) for i in items],
@@ -275,7 +277,7 @@ async def list_headcount_facts(
         filters["project_id"] = project_id
     if object_id:
         filters["object_id"] = object_id
-    items = await service.wf_headcount_fact_manager.search(order_by=["-fact_date"], **filters)
+    items = await service.wf_headcount_fact_manager.search(order_by=["-fact_date"], pagination=pagination, **filters)
     total = await service.wf_headcount_fact_manager.count(**filters)
     return ListDataResponseSchema[WfHeadcountFactSchema].create(
         list_data=[WfHeadcountFactSchema.model_validate(i) for i in items],

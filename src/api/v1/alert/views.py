@@ -37,7 +37,7 @@ async def list_alerts(
     if date_to:
         filter_data["date__lte"] = date_to
 
-    items = await service.alert_manager.search(order_by=["-date"], **filter_data)
+    items = await service.alert_manager.search(order_by=["-date"], pagination=pagination, **filter_data)
     total = await service.alert_manager.count(**filter_data)
     return ListDataResponseSchema[AlertSchema].create(
         list_data=[AlertSchema.model_validate(i) for i in items],
