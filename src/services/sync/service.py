@@ -5,18 +5,33 @@ Three sync groups:
   A  objects — WfProject → WfProjectObject → Housing → Section → Floor
   B  work_catalog — WorkGroup → WorkType
   C  contractors — Contractor
+
+Plus payload-driven `import_*` variants that accept Pydantic items instead
+of calling the live Raport API. Used by offline xlsx dumps; same upsert
+logic, same `raport_id` upsert key.
 """
 
-from typing import Any
+from typing import Any, Iterable
 from uuid import UUID
 
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.api.v1.sync.schemes import (
+    ImportConstructionObjectItem,
+    ImportContractorItem,
+    ImportFloorItem,
+    ImportHousingItem,
+    ImportProjectItem,
+    ImportSectionItem,
+    ImportWorkGroupItem,
+    ImportWorkTypeItem,
+)
 from src.config.logger import LoggerProvider
 from src.config.postgres.db_config import get_session
 from src.external.report.client import ReportClient
 from src.models import managers
+from src.models.managers.common import BaseManager
 from src.services.common import BaseService
 
 log = LoggerProvider().get_logger(__name__)
@@ -276,6 +291,209 @@ class SyncService(BaseService):
             )
 
         return {"contractors": len(rows)}
+
+    # ------------------------------------------------------------------
+    # Payload-driven imports (xlsx dump → upsert; parents resolved by raport_id)
+    # ------------------------------------------------------------------
+
+    async def _resolve_parents(self, manager: BaseManager, raport_ids: Iterable[str]) -> dict[str, UUID]:
+        """Build {raport_id: local_id} map for the given parent manager."""
+        ids = {rid for rid in raport_ids if rid}
+        if not ids:
+            return {}
+        rows = await manager.search(raport_id__in=list(ids))
+        return {row.raport_id: row.id for row in rows if row.raport_id}
+
+    async def import_projects(self, items: list[ImportProjectItem]) -> dict[str, int]:
+        rows = [
+            {
+                "raport_id": i.raport_id,
+                "name": i.name,
+                "project_class": i.project_class,
+                "description": i.description,
+            }
+            for i in items
+        ]
+        if rows:
+            await self.wf_project_manager.bulk_upsert(
+                rows,
+                key_field="raport_id",
+                update_fields=["name", "project_class", "description"],
+            )
+        return {"received": len(items), "upserted": len(rows), "missing_parents": 0}
+
+    async def import_construction_objects(self, items: list[ImportConstructionObjectItem]) -> dict[str, int]:
+        parent_map = await self._resolve_parents(self.wf_project_manager, (i.project_raport_id for i in items))
+        rows = []
+        missing = 0
+        for i in items:
+            project_id = parent_map.get(i.project_raport_id)
+            if project_id is None:
+                missing += 1
+                continue
+            rows.append(
+                {
+                    "raport_id": i.raport_id,
+                    "project_id": project_id,
+                    "name": i.name,
+                    "description": i.description,
+                    "planned_end_date": i.planned_end_date,
+                }
+            )
+        if rows:
+            await self.wf_project_object_manager.bulk_upsert(
+                rows,
+                key_field="raport_id",
+                update_fields=["name", "description", "planned_end_date", "project_id"],
+            )
+        return {"received": len(items), "upserted": len(rows), "missing_parents": missing}
+
+    async def import_housings(self, items: list[ImportHousingItem]) -> dict[str, int]:
+        parent_map = await self._resolve_parents(
+            self.wf_project_object_manager,
+            (i.construction_object_raport_id for i in items if i.construction_object_raport_id),
+        )
+        rows = []
+        missing = 0
+        for i in items:
+            co_id: UUID | None = None
+            if i.construction_object_raport_id:
+                co_id = parent_map.get(i.construction_object_raport_id)
+                if co_id is None:
+                    missing += 1
+                    continue
+            rows.append(
+                {
+                    "raport_id": i.raport_id,
+                    "construction_object_id": co_id,
+                    "name": i.name,
+                    "complex_name": i.complex_name,
+                    "description": i.description,
+                }
+            )
+        if rows:
+            await self.housing_manager.bulk_upsert(
+                rows,
+                key_field="raport_id",
+                update_fields=["name", "complex_name", "construction_object_id", "description"],
+            )
+        return {"received": len(items), "upserted": len(rows), "missing_parents": missing}
+
+    async def import_sections(self, items: list[ImportSectionItem]) -> dict[str, int]:
+        parent_map = await self._resolve_parents(self.housing_manager, (i.housing_raport_id for i in items))
+        rows = []
+        missing = 0
+        for i in items:
+            housing_id = parent_map.get(i.housing_raport_id)
+            if housing_id is None:
+                missing += 1
+                continue
+            rows.append(
+                {
+                    "raport_id": i.raport_id,
+                    "housing_id": housing_id,
+                    "name": i.name,
+                    "section_number": i.section_number,
+                    "description": i.description,
+                }
+            )
+        if rows:
+            await self.section_manager.bulk_upsert(
+                rows,
+                key_field="raport_id",
+                update_fields=["name", "section_number", "housing_id", "description"],
+            )
+        return {"received": len(items), "upserted": len(rows), "missing_parents": missing}
+
+    async def import_floors(self, items: list[ImportFloorItem]) -> dict[str, int]:
+        parent_map = await self._resolve_parents(self.section_manager, (i.section_raport_id for i in items))
+        rows = []
+        missing = 0
+        for i in items:
+            section_id = parent_map.get(i.section_raport_id)
+            if section_id is None:
+                missing += 1
+                continue
+            rows.append(
+                {
+                    "raport_id": i.raport_id,
+                    "section_id": section_id,
+                    "floor_number": i.floor_number,
+                    "name": i.name,
+                    "description": i.description,
+                }
+            )
+        if rows:
+            await self.floor_manager.bulk_upsert(
+                rows,
+                key_field="raport_id",
+                update_fields=["floor_number", "name", "section_id", "description"],
+            )
+        return {"received": len(items), "upserted": len(rows), "missing_parents": missing}
+
+    async def import_work_groups(self, items: list[ImportWorkGroupItem]) -> dict[str, int]:
+        rows = [
+            {
+                "raport_id": i.raport_id,
+                "name": i.name,
+                "code": i.code,
+                "description": i.description,
+            }
+            for i in items
+        ]
+        if rows:
+            await self.work_group_manager.bulk_upsert(
+                rows,
+                key_field="raport_id",
+                update_fields=["name", "code", "description"],
+            )
+        return {"received": len(items), "upserted": len(rows), "missing_parents": 0}
+
+    async def import_work_types(self, items: list[ImportWorkTypeItem]) -> dict[str, int]:
+        parent_map = await self._resolve_parents(self.work_group_manager, (i.work_group_raport_id for i in items))
+        rows = []
+        missing = 0
+        for i in items:
+            group_id = parent_map.get(i.work_group_raport_id)
+            if group_id is None:
+                missing += 1
+                continue
+            rows.append(
+                {
+                    "raport_id": i.raport_id,
+                    "group_id": group_id,
+                    "name": i.name,
+                    "code": i.code,
+                    "unit": i.unit,
+                    "description": i.description,
+                }
+            )
+        if rows:
+            await self.work_type_manager.bulk_upsert(
+                rows,
+                key_field="raport_id",
+                update_fields=["name", "code", "unit", "description", "group_id"],
+            )
+        return {"received": len(items), "upserted": len(rows), "missing_parents": missing}
+
+    async def import_contractors(self, items: list[ImportContractorItem]) -> dict[str, int]:
+        rows = [
+            {
+                "raport_id": i.raport_id,
+                "name": i.name,
+                "short_name": (i.short_name or i.name)[:100],
+                "inn": i.inn,
+                "description": i.description,
+            }
+            for i in items
+        ]
+        if rows:
+            await self.contractor_manager.bulk_upsert(
+                rows,
+                key_field="raport_id",
+                update_fields=["name", "short_name", "inn", "description"],
+            )
+        return {"received": len(items), "upserted": len(rows), "missing_parents": 0}
 
 
 async def get_sync_service(db: AsyncSession = Depends(get_session)) -> SyncService:
