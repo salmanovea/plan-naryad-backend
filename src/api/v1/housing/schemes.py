@@ -25,6 +25,9 @@ class HousingSchema(IDMixinSchema):
     name: str
     complex_name: str
     description: Optional[str] = None
+    # Линк на workforce-объект строительства; нужен фронту для каскадного
+    # фильтра «Проект → Объект → Корпус → Секция».
+    construction_object_id: Optional[UUID] = None
 
 
 class CreateSectionRequest(BaseModel):
