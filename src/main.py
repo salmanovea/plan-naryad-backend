@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.authentication import AuthenticationMiddleware
 
 from src.api.v1.alert.views import alert_router
 from src.api.v1.contractor.views import contractor_router
@@ -11,13 +12,14 @@ from src.api.v1.fact.views import fact_router
 from src.api.v1.housing.views import housing_router
 from src.api.v1.plan.views import plan_router
 from src.api.v1.reconciliation.views import reconciliation_router
-from src.api.v1.work.views import work_router
 from src.api.v1.sync.views import sync_router
+from src.api.v1.work.views import work_router
 from src.api.v1.workforce.views import workforce_router
 from src.config.admin.config import init_admin
 from src.config.logger import LoggerProvider
 from src.config.postgres.db_config import async_engine
 from src.config.settings import app_config
+from src.middlewares.keycloak_middleware import KeycloakMiddleware
 
 log = LoggerProvider().get_logger(__name__)
 
@@ -37,6 +39,8 @@ app = FastAPI(
     version=app_config.project_docs_version,
     lifespan=lifespan,
 )
+
+app.add_middleware(AuthenticationMiddleware, backend=KeycloakMiddleware())
 
 app.add_middleware(
     CORSMiddleware,

@@ -29,10 +29,15 @@ class AppConfig(BaseSettings):
     # Business logic limits
     max_items_per_contractor: int = 10
 
-    # Keycloak (used by Raport auth client)
+    # Keycloak — shared connection params (used by both Bearer auth and Raport client)
     keycloak_server_url: Optional[str] = None
     keycloak_realm: Optional[str] = None
     keycloak_verify_ssl: bool = True
+
+    # Keycloak Bearer-token auth (set AUTH_ENABLED=true to activate)
+    auth_enabled: bool = False
+    keycloak_client_id: Optional[str] = None
+    keycloak_client_secret: Optional[str] = None
 
     # Raport ecosystem — external data source
     report_api_url: Optional[str] = None
