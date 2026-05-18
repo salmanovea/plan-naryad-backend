@@ -1,0 +1,4 @@
+include:
+  - project: 'report/pipelines/plan_naryad_backend_pipeline'
+    ref: main
+    file: '.gitlab-ci.yml'
