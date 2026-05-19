@@ -21,7 +21,7 @@ services:
     restart: always
     expose:
       - "8000"
-    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    entrypoint: sh -c "./scripts/entrypoint_api.sh"
     environment:
       VIRTUAL_HOST: "$VIRTUAL_HOST"
       VIRTUAL_PORT: 8000
