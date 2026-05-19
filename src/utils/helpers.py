@@ -137,9 +137,14 @@ def catch_all_exceptions(func: Callable[P, Awaitable[R]]) -> Callable[P, Awaitab
 
 def pagination_params(
     page: int = Query(1, ge=1, description="Page number (1 or greater)"),
-    per_page: int = Query(100, ge=1, description="Items per page (1 or greater)"),
+    per_page: int = Query(1000, ge=1, le=100000, description="Items per page (1..100000)"),
 ) -> PaginationParams:
-    """Validate and build PaginationParams from query string."""
+    """Validate and build PaginationParams from query string.
+
+    Default per_page=1000 fits current reference collections (housings:506,
+    projects:41, works:377/103). Contractors (~47k) explicitly request
+    per_page=100000 from the frontend until server-side paging is wired up.
+    """
     if page < 1 or per_page < 1:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

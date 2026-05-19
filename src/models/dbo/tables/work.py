@@ -28,6 +28,9 @@ class WorkGroup(IDMixin, RaportMixin, Base):
     description: Mapped[Optional[str]] = mapped_column(String(1000))
     order: Mapped[int] = mapped_column(Integer, default=0)
 
+    def __str__(self) -> str:
+        return self.name
+
     work_types: Mapped[List["WorkType"]] = relationship(back_populates="group", cascade="all, delete-orphan")
 
 
@@ -45,6 +48,9 @@ class WorkType(IDMixin, RaportMixin, Base):
     code: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
     unit: Mapped[str] = mapped_column(String(20), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(String(1000))
+
+    def __str__(self) -> str:
+        return self.name
 
     group: Mapped["WorkGroup"] = relationship(back_populates="work_types")
     tech_sequence_items: Mapped[List["TechSequenceItem"]] = relationship(back_populates="work_type")

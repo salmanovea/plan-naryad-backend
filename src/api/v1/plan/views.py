@@ -41,7 +41,7 @@ async def list_plan_items(
     if date_to:
         filter_data["date__lte"] = date_to
 
-    items = await service.plan_item_manager.search(order_by=["-date"], **filter_data)
+    items = await service.plan_item_manager.search(order_by=["-date"], pagination=pagination, **filter_data)
     total = await service.plan_item_manager.count(**filter_data)
     return ListDataResponseSchema[PlanItemSchema].create(
         list_data=[PlanItemSchema.model_validate(i) for i in items],
@@ -102,12 +102,17 @@ async def generate_plan(
     body: GeneratePlanRequest,
     service: AutogenerationService = Depends(get_plan_service),
 ) -> DataResponseSchema[GeneratePlanResponse]:
-    items = await service.generate_daily_plan(body.housing_id, body.date)
+    items, reasons = await service.generate_daily_plan(body.housing_id, body.date)
+    if items:
+        message = f"Сгенерировано позиций: {len(items)} на {body.date}."
+    else:
+        message = f"Не удалось сгенерировать план на {body.date}."
     return DataResponseSchema[GeneratePlanResponse](
         data=GeneratePlanResponse(
             items=[PlanItemSchema.model_validate(i) for i in items],
             count=len(items),
-            message=f"Generated {len(items)} plan items for {body.date}",
+            message=message,
+            reasons=reasons,
         )
     )
 

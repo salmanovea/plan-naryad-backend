@@ -32,7 +32,9 @@ async def list_contractors(
 ) -> ListDataResponseSchema[ContractorSchema]:
     filter_data = filters.model_dump(exclude_none=True)
     search_text = filter_data.pop("search", None)
-    items = await service.contractor_manager.search(search=search_text, order_by=["name"], **filter_data)
+    items = await service.contractor_manager.search(
+        search=search_text, order_by=["name"], pagination=pagination, **filter_data
+    )
     total = await service.contractor_manager.count(search=search_text, **filter_data)
     return ListDataResponseSchema[ContractorSchema].create(
         list_data=[ContractorSchema.model_validate(i) for i in items],

@@ -38,7 +38,9 @@ async def list_housings(
 ) -> ListDataResponseSchema[HousingSchema]:
     filter_data = filters.model_dump(exclude_none=True)
     search_text = filter_data.pop("search", None)
-    items = await service.housing_manager.search(search=search_text, order_by=["name"], **filter_data)
+    items = await service.housing_manager.search(
+        search=search_text, order_by=["name"], pagination=pagination, **filter_data
+    )
     total = await service.housing_manager.count(search=search_text, **filter_data)
     return ListDataResponseSchema[HousingSchema].create(
         list_data=[HousingSchema.model_validate(i) for i in items],

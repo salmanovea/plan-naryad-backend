@@ -25,6 +25,9 @@ class Contractor(IDMixin, RaportMixin, Base):
     email: Mapped[Optional[str]] = mapped_column(String(100))
     description: Mapped[Optional[str]] = mapped_column(String(1000))
 
+    def __str__(self) -> str:
+        return self.name
+
     assignments: Mapped[List["ContractorAssignment"]] = relationship(
         back_populates="contractor",
         cascade="all, delete-orphan",

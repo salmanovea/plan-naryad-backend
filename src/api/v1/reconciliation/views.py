@@ -46,7 +46,7 @@ async def list_reconciliation_results(
     if date_to:
         filter_data["date__lte"] = date_to
 
-    items = await service.reconciliation_manager.search(order_by=["-date"], **filter_data)
+    items = await service.reconciliation_manager.search(order_by=["-date"], pagination=pagination, **filter_data)
     total = await service.reconciliation_manager.count(**filter_data)
     return ListDataResponseSchema[ReconciliationResultSchema].create(
         list_data=[ReconciliationResultSchema.model_validate(i) for i in items],
@@ -83,7 +83,7 @@ async def list_daily_summaries(
     if date_to:
         filter_data["date__lte"] = date_to
 
-    items = await service.daily_summary_manager.search(order_by=["-date"], **filter_data)
+    items = await service.daily_summary_manager.search(order_by=["-date"], pagination=pagination, **filter_data)
     total = await service.daily_summary_manager.count(**filter_data)
     return ListDataResponseSchema[DailySummarySchema].create(
         list_data=[DailySummarySchema.model_validate(i) for i in items],

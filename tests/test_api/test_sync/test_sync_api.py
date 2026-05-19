@@ -37,28 +37,20 @@ def _make_report_client_mock() -> MagicMock:
             [{"id": RAPORT_PROJECT_ID, "name": "ЖК Тест", "description": "Тестовый проект", "class": "Комфорт"}]
         )
     )
-    mock.list_project_queues = AsyncMock(
-        return_value=_paginated([{"id": RAPORT_QUEUE_ID, "name": "Очередь 1"}])
-    )
+    mock.list_project_queues = AsyncMock(return_value=_paginated([{"id": RAPORT_QUEUE_ID, "name": "Очередь 1"}]))
     mock.list_queue_construction_objects = AsyncMock(
         return_value=_paginated(
             [{"id": RAPORT_CO_ID, "name": "Корпус 5", "description": None, "planned_end_date": None}]
         )
     )
     mock.list_construction_object_housings = AsyncMock(
-        return_value=_paginated(
-            [{"id": RAPORT_HOUSING_ID, "name": "Корпус 5А", "complex_name": "ЖК Тест"}]
-        )
+        return_value=_paginated([{"id": RAPORT_HOUSING_ID, "name": "Корпус 5А", "complex_name": "ЖК Тест"}])
     )
     mock.list_housing_sections = AsyncMock(
-        return_value=_paginated(
-            [{"id": RAPORT_SECTION_ID, "name": "Секция 1", "number": 1}]
-        )
+        return_value=_paginated([{"id": RAPORT_SECTION_ID, "name": "Секция 1", "number": 1}])
     )
     mock.list_section_floors = AsyncMock(
-        return_value=_paginated(
-            [{"id": RAPORT_FLOOR_ID, "name": "1 этаж", "number": 1}]
-        )
+        return_value=_paginated([{"id": RAPORT_FLOOR_ID, "name": "1 этаж", "number": 1}])
     )
     mock.list_contractors = AsyncMock(
         return_value=_paginated(
@@ -99,6 +91,7 @@ def _make_report_client_mock() -> MagicMock:
 # sync/contractors
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.smoke
 async def test_sync_contractors_returns_200(client):
     mock = _make_report_client_mock()
@@ -117,9 +110,8 @@ async def test_sync_contractors_upserts_row(client, async_test_session):
         await client.post("/api/v1/sync/contractors")
 
     from src.models import managers
-    contractor = await managers.ContractorManager(async_test_session).search(
-        raport_id=RAPORT_CONTRACTOR_ID
-    )
+
+    contractor = await managers.ContractorManager(async_test_session).search(raport_id=RAPORT_CONTRACTOR_ID)
     assert len(contractor) == 1
     assert contractor[0].name == "ООО Рапорт Строй"
     assert contractor[0].inn == "9876543210"
@@ -139,6 +131,7 @@ async def test_sync_contractors_idempotent(client):
 # ---------------------------------------------------------------------------
 # sync/work-catalog
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.smoke
 async def test_sync_work_catalog_returns_200(client):
@@ -160,15 +153,11 @@ async def test_sync_work_catalog_upserts_rows(client, async_test_session):
 
     from src.models import managers
 
-    groups = await managers.WorkGroupManager(async_test_session).search(
-        raport_id=RAPORT_WORK_GROUP_ID
-    )
+    groups = await managers.WorkGroupManager(async_test_session).search(raport_id=RAPORT_WORK_GROUP_ID)
     assert len(groups) == 1
     assert groups[0].code == "MONOLITH"
 
-    types = await managers.WorkTypeManager(async_test_session).search(
-        raport_id=RAPORT_WORK_TYPE_ID
-    )
+    types = await managers.WorkTypeManager(async_test_session).search(raport_id=RAPORT_WORK_TYPE_ID)
     assert len(types) == 1
     assert types[0].code == "FLOOR_POUR"
     assert types[0].unit == "м²"
@@ -187,6 +176,7 @@ async def test_sync_work_catalog_idempotent(client):
 # ---------------------------------------------------------------------------
 # sync/objects
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.smoke
 async def test_sync_objects_returns_200(client):
@@ -211,33 +201,23 @@ async def test_sync_objects_upserts_full_hierarchy(client, async_test_session):
 
     from src.models import managers
 
-    projects = await managers.WfProjectManager(async_test_session).search(
-        raport_id=RAPORT_PROJECT_ID
-    )
+    projects = await managers.WfProjectManager(async_test_session).search(raport_id=RAPORT_PROJECT_ID)
     assert len(projects) == 1
     assert projects[0].name == "ЖК Тест"
 
-    objects = await managers.WfProjectObjectManager(async_test_session).search(
-        raport_id=RAPORT_CO_ID
-    )
+    objects = await managers.WfProjectObjectManager(async_test_session).search(raport_id=RAPORT_CO_ID)
     assert len(objects) == 1
     assert objects[0].name == "Корпус 5"
 
-    housings = await managers.HousingManager(async_test_session).search(
-        raport_id=RAPORT_HOUSING_ID
-    )
+    housings = await managers.HousingManager(async_test_session).search(raport_id=RAPORT_HOUSING_ID)
     assert len(housings) == 1
     assert housings[0].name == "Корпус 5А"
 
-    sections = await managers.SectionManager(async_test_session).search(
-        raport_id=RAPORT_SECTION_ID
-    )
+    sections = await managers.SectionManager(async_test_session).search(raport_id=RAPORT_SECTION_ID)
     assert len(sections) == 1
     assert sections[0].section_number == 1
 
-    floors = await managers.FloorManager(async_test_session).search(
-        raport_id=RAPORT_FLOOR_ID
-    )
+    floors = await managers.FloorManager(async_test_session).search(raport_id=RAPORT_FLOOR_ID)
     assert len(floors) == 1
     assert floors[0].floor_number == 1
 
