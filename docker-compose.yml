@@ -1,37 +1,28 @@
-version: '3.8'
+x-common: &x-common
+  image: harbor.fsk.ru/report/plan-naryad-backend@sha256:$SHA256
+  logging:
+    driver: "loki"
+    options:
+      loki-url: "http://localhost:3100/loki/api/v1/push"
+      loki-batch-size: "100"
+      loki-retries: 2
+      loki-max-backoff: 1000ms
+      loki-timeout: 1s
+  restart: always
+  env_file:
+    - ./.env
+  networks:
+    - fsk_report
 
 services:
-  db:
-    image: postgres:16
+  plan-naryad-backend:
+    <<: *x-common
+    container_name: plan-naryad-backend
     restart: always
-    environment:
-      POSTGRES_DB: plan_naryad
-      POSTGRES_USER: pn_user
-      POSTGRES_PASSWORD: pn_secret
-    ports:
-      - "127.0.0.1:5433:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U pn_user -d plan_naryad"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
-  api:
-    build: .
-    restart: always
-    ports:
-      - "8090:8000"
-    environment:
-      DATABASE_URL: postgresql+asyncpg://pn_user:pn_secret@db:5432/plan_naryad
-      PYTHONPATH: /app
-    depends_on:
-      db:
-        condition: service_healthy
-    volumes:
-      - ./app:/app/app
+    expose:
+      - "8000"
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 
-volumes:
-  pgdata:
+networks:
+  fsk_report:
+    external: true
