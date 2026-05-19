@@ -22,6 +22,12 @@ services:
     expose:
       - "8000"
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    environment:
+      VIRTUAL_HOST: "$VIRTUAL_HOST"
+      VIRTUAL_PORT: 8000
+      VIRTUAL_PATH: "~^(/api-pn/)"
+      NETWORK_ACCESS: internal
+
 
 networks:
   fsk_report:
