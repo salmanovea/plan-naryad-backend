@@ -13,9 +13,10 @@ class AppConfig(BaseSettings):
     project_title: str = "Plan-naryad API"
     project_host: str = "0.0.0.0"
     project_port: int = 8090
-    project_docs_url: str = "/api/openapi"
+    project_api_prefix: str = "/api"
+    project_docs_url: str = "/openapi"
     project_docs_version: str = "1.0.0"
-    project_openapi_url: str = "/api/openapi.json"
+    project_openapi_url: str = "/openapi.json"
 
     db_driver_name: str = "postgresql+asyncpg"
     db_host: str = "localhost"

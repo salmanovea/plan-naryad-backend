@@ -34,8 +34,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title=app_config.project_title,
-    docs_url=app_config.project_docs_url,
-    openapi_url=app_config.project_openapi_url,
+    docs_url=app_config.project_api_prefix + app_config.project_docs_url,
+    openapi_url=app_config.project_api_prefix + app_config.project_openapi_url,
     version=app_config.project_docs_version,
     lifespan=lifespan,
 )
@@ -45,18 +45,14 @@ app.add_middleware(AuthenticationMiddleware, backend=KeycloakMiddleware())
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://raport.emiltools.ru",
-        "http://raport.emiltools.ru",
-        "https://emiltools.ru",
-        "http://localhost:5173",
-        "http://localhost:3000",
+        "*",
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-_PREFIX = "/api/v1"
+_PREFIX = app_config.project_api_prefix
 app.include_router(housing_router, prefix=_PREFIX)
 app.include_router(work_router, prefix=_PREFIX)
 app.include_router(contractor_router, prefix=_PREFIX)
