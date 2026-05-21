@@ -12,6 +12,7 @@ from src.config.admin.model_admin.workforce import (
     WfProjectObjectAdmin,
 )
 from src.config.postgres.db_config import async_engine
+from src.config.settings import app_config
 
 
 def init_admin(app: FastAPI) -> Admin:
