@@ -15,7 +15,12 @@ from src.config.postgres.db_config import async_engine
 
 
 def init_admin(app: FastAPI) -> Admin:
-    admin = Admin(app=app, engine=async_engine, title="Plan-naryad Admin")
+    admin = Admin(
+        app=app,
+        engine=async_engine,
+        title="Plan-naryad Admin",
+        base_url=f"/pn/admin",
+    )
 
     # Project structure
     admin.add_view(WfProjectAdmin)
