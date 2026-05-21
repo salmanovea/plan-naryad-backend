@@ -1,0 +1,34 @@
+x-common: &x-common
+  image: harbor.fsk.ru/report/plan-naryad-backend@sha256:$SHA256
+  logging:
+    driver: "loki"
+    options:
+      loki-url: "http://localhost:3100/loki/api/v1/push"
+      loki-batch-size: "100"
+      loki-retries: 2
+      loki-max-backoff: 1000ms
+      loki-timeout: 1s
+  restart: always
+  env_file:
+    - ./.env
+  networks:
+    - fsk_report
+
+services:
+  plan-naryad-backend:
+    <<: *x-common
+    container_name: plan-naryad-backend
+    restart: always
+    expose:
+      - "8000"
+    entrypoint: sh -c "./scripts/entrypoint_api.sh"
+    environment:
+      VIRTUAL_HOST: "$VIRTUAL_HOST"
+      VIRTUAL_PORT: 8000
+      VIRTUAL_PATH: "~^(/api-pn/)"
+      NETWORK_ACCESS: internal
+
+
+networks:
+  fsk_report:
+    external: true
