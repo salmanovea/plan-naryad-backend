@@ -64,7 +64,8 @@ class PlanItemSchema(IDMixinSchema):
     status: Optional[str] = None
     work_name: Optional[str] = None
     section_name: Optional[str] = None
-    floor_number: Optional[int] = None
+    floor_number: Optional[str] = None
+    contractor_name: Optional[str] = None
 
 
 class GeneratePlanResponse(BaseModel):
