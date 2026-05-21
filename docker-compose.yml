@@ -25,7 +25,7 @@ services:
     environment:
       VIRTUAL_HOST: "$VIRTUAL_HOST"
       VIRTUAL_PORT: 8000
-      VIRTUAL_PATH: "~^(/api-pn/|/pn/admin/)"
+      VIRTUAL_PATH: "~ ^(/api-pn/|/pn/admin/)"
       NETWORK_ACCESS: internal
 
 
