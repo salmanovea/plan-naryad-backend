@@ -1,0 +1,38 @@
+services:
+  db:
+    image: postgres:16
+    restart: always
+    environment:
+      POSTGRES_DB: plan_naryad
+      POSTGRES_USER: pn_user
+      POSTGRES_PASSWORD: pn_secret
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pn_user -d plan_naryad"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: .
+    restart: always
+    ports:
+      - "8090:8090"
+    environment:
+      PORT: "8090"
+      DB_DRIVER_NAME: postgresql+asyncpg
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: plan_naryad
+      DB_USER: pn_user
+      DB_PASS: pn_secret
+      PROJECT_PORT: "8090"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
