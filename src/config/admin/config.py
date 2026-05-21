@@ -20,7 +20,7 @@ def init_admin(app: FastAPI) -> Admin:
         app=app,
         engine=async_engine,
         title="Plan-naryad Admin",
-        base_url=f"{app_config.project_api_prefix}/admin",
+        base_url=f"/pn/admin",
     )
 
     # Project structure
