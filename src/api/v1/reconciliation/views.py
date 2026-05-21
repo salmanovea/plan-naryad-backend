@@ -46,7 +46,9 @@ async def list_reconciliation_results(
     if date_to:
         filter_data["date__lte"] = date_to
 
-    items = await service.reconciliation_manager.search(order_by=["-date"], pagination=pagination, **filter_data)
+    items = await service.reconciliation_manager.search_with_names(
+        order_by=["-date"], pagination=pagination, **filter_data
+    )
     total = await service.reconciliation_manager.count(**filter_data)
     return ListDataResponseSchema[ReconciliationResultSchema].create(
         list_data=[ReconciliationResultSchema.model_validate(i) for i in items],
@@ -61,7 +63,7 @@ async def get_reconciliation_result(
     result_id: UUID,
     service: ReconciliationService = Depends(get_reconciliation_service),
 ) -> DataResponseSchema[ReconciliationResultSchema]:
-    item = await service.reconciliation_manager.get_by_id(result_id)
+    item = await service.reconciliation_manager.get_by_id_with_names(result_id)
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reconciliation result not found")
     return DataResponseSchema[ReconciliationResultSchema](data=ReconciliationResultSchema.model_validate(item))
@@ -83,7 +85,9 @@ async def list_daily_summaries(
     if date_to:
         filter_data["date__lte"] = date_to
 
-    items = await service.daily_summary_manager.search(order_by=["-date"], pagination=pagination, **filter_data)
+    items = await service.daily_summary_manager.search_with_names(
+        order_by=["-date"], pagination=pagination, **filter_data
+    )
     total = await service.daily_summary_manager.count(**filter_data)
     return ListDataResponseSchema[DailySummarySchema].create(
         list_data=[DailySummarySchema.model_validate(i) for i in items],
@@ -98,7 +102,7 @@ async def get_daily_summary(
     summary_id: UUID,
     service: ReconciliationService = Depends(get_reconciliation_service),
 ) -> DataResponseSchema[DailySummarySchema]:
-    item = await service.daily_summary_manager.get_by_id(summary_id)
+    item = await service.daily_summary_manager.get_by_id_with_names(summary_id)
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Daily summary not found")
     return DataResponseSchema[DailySummarySchema](data=DailySummarySchema.model_validate(item))
