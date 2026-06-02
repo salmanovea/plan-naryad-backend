@@ -1,4 +1,4 @@
-FROM python:3.12-bullseye
+FROM harbor.fsk.ru/docker/python:3.12-bullseye
 
 WORKDIR /app
 
