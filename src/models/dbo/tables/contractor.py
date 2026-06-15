@@ -1,7 +1,7 @@
 from typing import TYPE_CHECKING, List, Optional
 from uuid import UUID
 
-from sqlalchemy import ARRAY, ForeignKey, String
+from sqlalchemy import ARRAY, ForeignKey, Index, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.dbo.mixins import IDMixin, RaportMixin
@@ -58,8 +58,21 @@ class ContractorAssignment(IDMixin, Base):
         index=True,
     )
     work_type_ids: Mapped[List[str]] = mapped_column(ARRAY(String), default=list)
+    source: Mapped[str] = mapped_column(String(20), default="manual", nullable=False)
 
     contractor: Mapped["Contractor"] = relationship(back_populates="assignments")
     housing: Mapped["Housing"] = relationship()  # type: ignore[name-defined]
     section: Mapped[Optional["Section"]] = relationship()  # type: ignore[name-defined]
     work_group: Mapped[Optional["WorkGroup"]] = relationship()  # type: ignore[name-defined]
+
+    __table_args__ = (
+        Index(
+            "uq_contractor_assignments_key",
+            "contractor_id",
+            "housing_id",
+            "section_id",
+            "work_group_id",
+            unique=True,
+            postgresql_nulls_not_distinct=True,
+        ),
+    )

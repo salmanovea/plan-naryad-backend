@@ -6,7 +6,7 @@ from src.config.admin.categories import CATEGORY_PROJECT_STRUCTURE, CATEGORY_WOR
 from src.config.admin.model_admin.base_admin import BaseAdmin
 from src.config.postgres.db_config import get_async_session
 from src.models.dbo.tables.workforce import ArticleBDR, WfArticleMapping, WfProject, WfProjectObject
-from src.services.sync.service import SyncService
+from src.services.sync.service import SyncReportService
 
 
 class ArticleBDRAdmin(BaseAdmin, model=ArticleBDR):  # type: ignore[call-arg]
@@ -101,7 +101,7 @@ class WfProjectAdmin(BaseAdmin, model=WfProject):  # type: ignore[call-arg]
                     if not project:
                         continue
                     raport_id = project.raport_id
-                    service = SyncService(db)
+                    service = SyncReportService(db)
                     await service.sync_objects(project_raport_id=raport_id)
             except Exception as err:
                 errors.append(str(err))
