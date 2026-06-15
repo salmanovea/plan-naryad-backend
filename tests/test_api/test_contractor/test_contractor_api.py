@@ -1,5 +1,7 @@
 import pytest
 
+from tests.constants import API
+
 CONTRACTOR_1_ID = "99999999-9999-9999-9999-999999999999"
 CONTRACTOR_2_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
 HOUSING_1_ID = "11111111-1111-1111-1111-111111111111"
@@ -7,7 +9,7 @@ HOUSING_1_ID = "11111111-1111-1111-1111-111111111111"
 
 @pytest.mark.smoke
 async def test_list_contractors_returns_200(client):
-    response = await client.get("/api/v1/contractors/")
+    response = await client.get(f"{API}/contractors/")
 
     assert response.status_code == 200
     body = response.json()
@@ -17,7 +19,7 @@ async def test_list_contractors_returns_200(client):
 
 
 async def test_get_contractor_by_id_returns_200(client):
-    response = await client.get(f"/api/v1/contractors/{CONTRACTOR_1_ID}")
+    response = await client.get(f"{API}/contractors/{CONTRACTOR_1_ID}")
 
     assert response.status_code == 200
     body = response.json()
@@ -27,7 +29,7 @@ async def test_get_contractor_by_id_returns_200(client):
 
 
 async def test_get_contractor_not_found_returns_404(client):
-    response = await client.get("/api/v1/contractors/00000000-0000-0000-0000-000000000000")
+    response = await client.get(f"{API}/contractors/00000000-0000-0000-0000-000000000000")
 
     assert response.status_code == 404
     assert response.json()["code"] == "404"
@@ -35,7 +37,7 @@ async def test_get_contractor_not_found_returns_404(client):
 
 async def test_create_contractor_returns_201(client):
     response = await client.post(
-        "/api/v1/contractors/",
+        f"{API}/contractors/",
         json={"name": "ООО Новый", "short_name": "Новый"},
     )
 
@@ -47,7 +49,7 @@ async def test_create_contractor_returns_201(client):
 
 async def test_update_contractor_returns_200(client):
     response = await client.put(
-        f"/api/v1/contractors/{CONTRACTOR_2_ID}",
+        f"{API}/contractors/{CONTRACTOR_2_ID}",
         json={"contact_person": "Петров П.П."},
     )
 
@@ -57,7 +59,7 @@ async def test_update_contractor_returns_200(client):
 
 
 async def test_list_assignments_returns_200(client):
-    response = await client.get(f"/api/v1/contractors/{HOUSING_1_ID}/assignments")
+    response = await client.get(f"{API}/contractors/{HOUSING_1_ID}/assignments")
 
     assert response.status_code == 200
     body = response.json()

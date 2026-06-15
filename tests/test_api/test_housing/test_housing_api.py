@@ -1,5 +1,7 @@
 import pytest
 
+from tests.constants import API
+
 HOUSING_1_ID = "11111111-1111-1111-1111-111111111111"
 HOUSING_2_ID = "22222222-2222-2222-2222-222222222222"
 SECTION_1_ID = "33333333-3333-3333-3333-333333333333"
@@ -7,7 +9,7 @@ SECTION_1_ID = "33333333-3333-3333-3333-333333333333"
 
 @pytest.mark.smoke
 async def test_list_housings_returns_200(client):
-    response = await client.get("/api/v1/housings/")
+    response = await client.get(f"{API}/housings/")
 
     assert response.status_code == 200
     body = response.json()
@@ -17,7 +19,7 @@ async def test_list_housings_returns_200(client):
 
 
 async def test_get_housing_by_id_returns_200(client):
-    response = await client.get(f"/api/v1/housings/{HOUSING_1_ID}")
+    response = await client.get(f"{API}/housings/{HOUSING_1_ID}")
 
     assert response.status_code == 200
     body = response.json()
@@ -28,7 +30,7 @@ async def test_get_housing_by_id_returns_200(client):
 
 
 async def test_get_housing_not_found_returns_404(client):
-    response = await client.get("/api/v1/housings/00000000-0000-0000-0000-000000000000")
+    response = await client.get(f"{API}/housings/00000000-0000-0000-0000-000000000000")
 
     assert response.status_code == 404
     body = response.json()
@@ -36,7 +38,7 @@ async def test_get_housing_not_found_returns_404(client):
 
 
 async def test_get_housing_structure_returns_200(client):
-    response = await client.get(f"/api/v1/housings/{HOUSING_1_ID}/structure")
+    response = await client.get(f"{API}/housings/{HOUSING_1_ID}/structure")
 
     assert response.status_code == 200
     body = response.json()
@@ -52,7 +54,7 @@ async def test_get_housing_structure_returns_200(client):
 
 async def test_create_housing_returns_201(client):
     response = await client.post(
-        "/api/v1/housings/",
+        f"{API}/housings/",
         json={"name": "Новый корпус", "complex_name": "ЖК Новый"},
     )
 
@@ -65,7 +67,7 @@ async def test_create_housing_returns_201(client):
 
 async def test_update_housing_returns_200(client):
     response = await client.put(
-        f"/api/v1/housings/{HOUSING_2_ID}",
+        f"{API}/housings/{HOUSING_2_ID}",
         json={"description": "Обновлённое описание"},
     )
 
@@ -75,7 +77,7 @@ async def test_update_housing_returns_200(client):
 
 
 async def test_list_sections_returns_200(client):
-    response = await client.get(f"/api/v1/housings/{HOUSING_1_ID}/sections")
+    response = await client.get(f"{API}/housings/{HOUSING_1_ID}/sections")
 
     assert response.status_code == 200
     body = response.json()
@@ -84,7 +86,7 @@ async def test_list_sections_returns_200(client):
 
 
 async def test_list_floors_returns_200(client):
-    response = await client.get(f"/api/v1/housings/sections/{SECTION_1_ID}/floors")
+    response = await client.get(f"{API}/housings/sections/{SECTION_1_ID}/floors")
 
     assert response.status_code == 200
     body = response.json()

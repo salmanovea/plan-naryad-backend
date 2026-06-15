@@ -1,4 +1,6 @@
 import pytest
+
+from tests.constants import API
 from datetime import date
 
 HOUSING_1_ID = "11111111-1111-1111-1111-111111111111"
@@ -10,7 +12,7 @@ CONTRACTOR_1_ID = "99999999-9999-9999-9999-999999999999"
 
 @pytest.mark.smoke
 async def test_list_plan_items_returns_200(client):
-    response = await client.get("/api/v1/plan-naryad/")
+    response = await client.get(f"{API}/plan-naryad/")
 
     assert response.status_code == 200
     body = response.json()
@@ -20,7 +22,7 @@ async def test_list_plan_items_returns_200(client):
 
 async def test_get_daily_plan_returns_200(client):
     response = await client.get(
-        "/api/v1/plan-naryad/daily",
+        f"{API}/plan-naryad/daily",
         params={"target_date": str(date.today()), "housing_id": HOUSING_1_ID},
     )
 
@@ -33,7 +35,7 @@ async def test_get_daily_plan_returns_200(client):
 
 async def test_create_plan_item_returns_201(client):
     response = await client.post(
-        "/api/v1/plan-naryad/",
+        f"{API}/plan-naryad/",
         json={
             "date": str(date.today()),
             "housing_id": HOUSING_1_ID,
@@ -53,7 +55,7 @@ async def test_create_plan_item_returns_201(client):
 
 
 async def test_get_plan_item_not_found_returns_404(client):
-    response = await client.get("/api/v1/plan-naryad/00000000-0000-0000-0000-000000000000")
+    response = await client.get(f"{API}/plan-naryad/00000000-0000-0000-0000-000000000000")
 
     assert response.status_code == 404
     assert response.json()["code"] == "404"
@@ -61,7 +63,7 @@ async def test_get_plan_item_not_found_returns_404(client):
 
 async def test_list_plan_items_with_filters(client):
     response = await client.get(
-        "/api/v1/plan-naryad/",
+        f"{API}/plan-naryad/",
         params={
             "housing_id": HOUSING_1_ID,
             "date_from": str(date.today()),

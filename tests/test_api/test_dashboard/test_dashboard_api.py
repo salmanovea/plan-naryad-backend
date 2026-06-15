@@ -1,4 +1,6 @@
 import pytest
+
+from tests.constants import API
 from datetime import date, timedelta
 
 HOUSING_1_ID = "11111111-1111-1111-1111-111111111111"
@@ -6,7 +8,7 @@ HOUSING_1_ID = "11111111-1111-1111-1111-111111111111"
 
 @pytest.mark.smoke
 async def test_dashboard_overview_returns_200(client):
-    response = await client.get("/api/v1/dashboard/overview")
+    response = await client.get(f"{API}/dashboard/overview")
 
     assert response.status_code == 200
     body = response.json()
@@ -21,7 +23,7 @@ async def test_dashboard_overview_returns_200(client):
 
 async def test_dashboard_overview_with_housing_filter(client):
     response = await client.get(
-        "/api/v1/dashboard/overview",
+        f"{API}/dashboard/overview",
         params={"housing_id": HOUSING_1_ID},
     )
 
@@ -35,7 +37,7 @@ async def test_dashboard_overview_with_housing_filter(client):
 async def test_dashboard_overview_with_date_range(client):
     today = date.today()
     response = await client.get(
-        "/api/v1/dashboard/overview",
+        f"{API}/dashboard/overview",
         params={
             "date_from": str(today - timedelta(days=30)),
             "date_to": str(today),

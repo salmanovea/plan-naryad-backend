@@ -1,3 +1,3 @@
-from src.external.report.client import ReportClient
+from src.external.report.api import ReportApi, ReportApiError
 
-__all__ = ["ReportClient"]
+__all__ = ["ReportApi", "ReportApiError"]
