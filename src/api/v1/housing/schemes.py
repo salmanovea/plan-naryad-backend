@@ -77,6 +77,7 @@ class FloorSchema(IDMixinSchema):
 class FloorInStructure(BaseModel):
     floor_id: UUID
     floor_number: int
+    name: Optional[str] = None
 
 
 class SectionInStructure(BaseModel):

@@ -51,3 +51,39 @@ async def test_dashboard_overview_with_date_range(client):
     assert data["date_to"] == str(today)
     assert isinstance(data["total_plan_items"], int)
     assert isinstance(data["total_alerts"], int)
+
+
+SECTION_1_ID = "33333333-3333-3333-3333-333333333333"
+
+
+async def test_dashboard_overview_with_section_filter(client):
+    response = await client.get(
+        f"{API}/dashboard/overview",
+        params={"housing_id": HOUSING_1_ID, "section_id": SECTION_1_ID},
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["section_id"] == SECTION_1_ID
+    assert data["section_name"] == "Секция 1"
+
+
+async def test_dashboard_sections_breakdown(client):
+    response = await client.get(
+        f"{API}/dashboard/sections",
+        params={"housing_id": HOUSING_1_ID},
+    )
+
+    assert response.status_code == 200
+    rows = response.json()["data"]
+    assert isinstance(rows, list)
+    # Housing 1 has two sections in the fixtures.
+    assert {r["section_name"] for r in rows} >= {"Секция 1", "Секция 2"}
+    for r in rows:
+        assert "total_plan_items" in r
+        assert "completion_rate" in r
+
+
+async def test_dashboard_sections_requires_housing_id(client):
+    response = await client.get(f"{API}/dashboard/sections")
+    assert response.status_code == 422

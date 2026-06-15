@@ -76,3 +76,72 @@ async def test_list_plan_items_with_filters(client):
     assert isinstance(body["data"], list)
     for item in body["data"]:
         assert item["housing_id"] == HOUSING_1_ID
+
+
+SECTION_1_ID = "33333333-3333-3333-3333-333333333333"
+
+
+async def test_get_daily_plan_accepts_section_filter(client):
+    response = await client.get(
+        f"{API}/plan-naryad/daily",
+        params={
+            "target_date": str(date.today()),
+            "housing_id": HOUSING_1_ID,
+            "section_id": SECTION_1_ID,
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert isinstance(data["items"], list)
+    for item in data["items"]:
+        assert item["section_id"] == SECTION_1_ID
+
+
+async def test_generate_plan_accepts_section(client):
+    response = await client.post(
+        f"{API}/plan-naryad/generate",
+        json={
+            "date": str(date.today()),
+            "housing_id": HOUSING_1_ID,
+            "section_id": SECTION_1_ID,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "count" in body["data"]
+
+
+SECTION_1_ID_ENR = "33333333-3333-3333-3333-333333333333"
+FLOOR_1_ID_ENR = "55555555-5555-5555-5555-555555555555"
+WORK_TYPE_ID_ENR = "88888888-8888-8888-8888-888888888888"
+CONTRACTOR_ID_ENR = "99999999-9999-9999-9999-999999999999"
+
+
+async def test_daily_plan_items_are_enriched(client):
+    """daily plan items carry section/floor/contractor names (issue 11)."""
+    enr_date = "2025-04-04"
+    await client.post(
+        f"{API}/plan-naryad/",
+        json={
+            "date": enr_date,
+            "housing_id": HOUSING_1_ID,
+            "section_id": SECTION_1_ID_ENR,
+            "floor_id": FLOOR_1_ID_ENR,
+            "work_type_id": WORK_TYPE_ID_ENR,
+            "contractor_id": CONTRACTOR_ID_ENR,
+            "planned_volume": "7",
+            "unit": "м3",
+        },
+    )
+    resp = await client.get(
+        f"{API}/plan-naryad/daily",
+        params={"target_date": enr_date, "housing_id": HOUSING_1_ID, "section_id": SECTION_1_ID_ENR},
+    )
+    items = resp.json()["data"]["items"]
+    assert items
+    item = items[0]
+    assert item["section_name"] == "Секция 1"
+    assert item["floor_name"] == "Этаж 1"
+    assert item["contractor_name"] == "ООО Стройтест"

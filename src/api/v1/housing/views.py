@@ -79,7 +79,7 @@ async def get_housing_structure(
             SectionInStructure(
                 section_id=section.id,
                 section_name=section.name,
-                floors=[FloorInStructure(floor_id=f.id, floor_number=f.floor_number) for f in floors],
+                floors=[FloorInStructure(floor_id=f.id, floor_number=f.floor_number, name=f.name) for f in floors],
             )
         )
 
