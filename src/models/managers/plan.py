@@ -5,7 +5,10 @@ from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from src.models.dbo.tables.contractor import Contractor
+from src.models.dbo.tables.housing import Floor, Section
 from src.models.dbo.tables.plan import PlanAdjustment, PlanItem
+from src.models.dbo.tables.work import WorkType
 from src.models.managers.common import BaseManager
 
 
