@@ -51,4 +51,6 @@ async def get_dashboard_sections(
         date_from=date_from,
         date_to=date_to,
     )
-    return ListDataResponseSchema[DashboardSectionSchema].create(list_data=rows)
+    return ListDataResponseSchema[DashboardSectionSchema].create(
+        list_data=[DashboardSectionSchema.model_validate(row) for row in rows]
+    )

@@ -94,7 +94,7 @@ async def get_object_contractors(
     service: WorkforceService = Depends(get_workforce_service),
 ) -> ListDataResponseSchema[ContractorHeadcountRow]:
     items = await service.calc_object_contractors(object_id)
-    return ListDataResponseSchema[ContractorHeadcountRow].create(list_data=[item.model_dump() for item in items])
+    return ListDataResponseSchema[ContractorHeadcountRow].create(list_data=items)
 
 
 @workforce_router.get("/system-problems", responses=get_responses(ResponseGroup.ALL_ERRORS))
@@ -114,7 +114,7 @@ async def get_contractor_rating(
     service: WorkforceService = Depends(get_workforce_service),
 ) -> ListDataResponseSchema[ContractorRatingRow]:
     items = await service.calc_contractor_rating()
-    return ListDataResponseSchema[ContractorRatingRow].create(list_data=[item.model_dump() for item in items])
+    return ListDataResponseSchema[ContractorRatingRow].create(list_data=items)
 
 
 # ── WfProject ─────────────────────────────────────────────────────────────────
@@ -409,7 +409,7 @@ async def list_violations(
     enriched = await service.enrich_violations(raw)
     total = await service.wf_violation_manager.count(**filter_data)
     return ListDataResponseSchema[ViolationOut].create(
-        list_data=[item.model_dump() for item in enriched],
+        list_data=enriched,
         pagination=pagination,
         total=total,
     )

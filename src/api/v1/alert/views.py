@@ -83,6 +83,8 @@ async def acknowledge_alert(
     if not alert:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alert not found")
     updated = await service.get_alert(alert_id)
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alert not found")
     return DataResponseSchema[AlertSchema](data=updated)
 
 
