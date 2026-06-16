@@ -116,9 +116,11 @@ class DailySummary(IDMixin, Base):
     total_no_report: Mapped[int] = mapped_column(Integer, default=0)
     total_unplanned: Mapped[int] = mapped_column(Integer, default=0)
 
-    completion_rate: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=0)
-    weighted_completion: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=0)
-    submission_rate: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=0)
+    # Stored as a 0..1 fraction (same scale as ReconciliationResult.completion_ratio),
+    # not a 0..100 percentage. Numeric(6, 4) keeps sub-percent precision.
+    completion_rate: Mapped[Decimal] = mapped_column(Numeric(6, 4), default=0)
+    weighted_completion: Mapped[Decimal] = mapped_column(Numeric(6, 4), default=0)
+    submission_rate: Mapped[Decimal] = mapped_column(Numeric(6, 4), default=0)
 
     contractor_details: Mapped[Optional[Any]] = mapped_column(JSON)
     alerts: Mapped[Optional[Any]] = mapped_column(JSON)

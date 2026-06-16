@@ -1,4 +1,6 @@
 import pytest
+
+from tests.constants import API
 from datetime import date
 
 HOUSING_1_ID = "11111111-1111-1111-1111-111111111111"
@@ -10,7 +12,7 @@ CONTRACTOR_1_ID = "99999999-9999-9999-9999-999999999999"
 
 @pytest.mark.smoke
 async def test_list_work_facts_returns_200(client):
-    response = await client.get("/api/v1/work-facts/")
+    response = await client.get(f"{API}/work-facts/")
 
     assert response.status_code == 200
     body = response.json()
@@ -19,7 +21,7 @@ async def test_list_work_facts_returns_200(client):
 
 
 async def test_get_work_fact_not_found_returns_404(client):
-    response = await client.get("/api/v1/work-facts/00000000-0000-0000-0000-000000000000")
+    response = await client.get(f"{API}/work-facts/00000000-0000-0000-0000-000000000000")
 
     assert response.status_code == 404
     assert response.json()["code"] == "404"
@@ -27,7 +29,7 @@ async def test_get_work_fact_not_found_returns_404(client):
 
 async def test_create_work_fact_returns_201(client):
     response = await client.post(
-        "/api/v1/work-facts/",
+        f"{API}/work-facts/",
         json={
             "date": str(date.today()),
             "housing_id": HOUSING_1_ID,
@@ -48,7 +50,7 @@ async def test_create_work_fact_returns_201(client):
 
 async def test_list_work_facts_with_date_filter(client):
     response = await client.get(
-        "/api/v1/work-facts/",
+        f"{API}/work-facts/",
         params={"date_from": str(date.today()), "date_to": str(date.today())},
     )
 

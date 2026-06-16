@@ -1,9 +1,10 @@
 from fastapi import FastAPI
 from sqladmin import Admin
 
-from src.config.admin.model_admin.contractor import ContractorAdmin, ContractorAssignmentAdmin
+from src.config.admin.model_admin.contractor import ContractAdmin, ContractorAdmin, ContractorAssignmentAdmin
 from src.config.admin.model_admin.housing import FloorAdmin, HousingAdmin, SectionAdmin
 from src.config.admin.model_admin.sync_actions import SyncActionsAdmin
+from src.config.admin.model_admin.user import UserAdmin
 from src.config.admin.model_admin.work import WorkGroupAdmin, WorkTypeAdmin
 from src.config.admin.model_admin.workforce import (
     ArticleBDRAdmin,
@@ -37,10 +38,14 @@ def init_admin(app: FastAPI) -> Admin:
     # Contractors
     admin.add_view(ContractorAdmin)
     admin.add_view(ContractorAssignmentAdmin)
+    admin.add_view(ContractAdmin)
 
     # Workforce
     admin.add_view(ArticleBDRAdmin)
     admin.add_view(WfArticleMappingAdmin)
+
+    # System
+    admin.add_view(UserAdmin)
 
     # Sync
     admin.add_view(SyncActionsAdmin)

@@ -6,9 +6,11 @@ from uuid import UUID
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.api.schemes import PaginationParams
+from src.api.v1.reconciliation.schemes import ReconciliationResultSchema
 from src.config.postgres.db_config import get_session
 from src.models import managers
-from src.models.dbo.tables.reconciliation import ReconciliationPattern, ReconciliationStatus
+from src.models.dbo.tables.reconciliation import ReconciliationPattern, ReconciliationResult, ReconciliationStatus
 from src.services.common import BaseService
 
 
@@ -19,6 +21,39 @@ class ReconciliationService(BaseService):
         self.reconciliation_manager = managers.ReconciliationResultManager(db)
         self.daily_summary_manager = managers.DailySummaryManager(db)
         self.housing_manager = managers.HousingManager(db)
+
+    @staticmethod
+    def _enrich_result(result: ReconciliationResult) -> ReconciliationResultSchema:
+        """Map a result (with relations loaded) to a schema with readable labels."""
+        schema = ReconciliationResultSchema.model_validate(result)
+        floor = result.floor
+        if floor:
+            schema.floor_number = floor.floor_number
+            schema.floor_name = floor.name or f"Этаж {floor.floor_number}"
+        schema.section_name = result.section.name if result.section else None
+        schema.work_name = result.work_type.name if result.work_type else None
+        schema.contractor_name = result.contractor.name if result.contractor else None
+        schema.housing_name = result.housing.name if result.housing else None
+        return schema
+
+    async def list_results(
+        self,
+        pagination: PaginationParams,
+        order_by: List[str],
+        **filters,
+    ) -> Tuple[List[ReconciliationResultSchema], int]:
+        """List reconciliation results with denormalized section/floor/etc labels."""
+        query = self.reconciliation_manager.get_enriched_query()
+        items = await self.reconciliation_manager.search(
+            query=query, order_by=order_by, pagination=pagination, **filters
+        )
+        total = await self.reconciliation_manager.count(**filters)
+        return [self._enrich_result(i) for i in items], total
+
+    async def get_result(self, result_id: UUID) -> Optional[ReconciliationResultSchema]:
+        """Fetch a single reconciliation result with denormalized labels."""
+        result = await self.reconciliation_manager.get_enriched_by_id(result_id)
+        return self._enrich_result(result) if result else None
 
     @staticmethod
     def classify_status(
@@ -152,12 +187,21 @@ class ReconciliationService(BaseService):
         done_over = counts.get(ReconciliationStatus.DONE_OVER, 0)
         no_report = counts.get(ReconciliationStatus.NO_REPORT, 0)
 
-        completion_rate = Decimal((done_full + done_over) / total_planned * 100) if total_planned > 0 else Decimal("0")
+        # All rates are 0..1 fractions (same scale as result.completion_ratio),
+        # quantized to 4 decimals so the frontend can render fractional percents.
+        quant = Decimal("0.0001")
+        completion_rate = (
+            (Decimal(done_full + done_over) / Decimal(total_planned)).quantize(quant)
+            if total_planned > 0
+            else Decimal("0")
+        )
         weighted_completion = (
-            Decimal(total_actual_volume / total_planned_volume * 100) if total_planned_volume > 0 else Decimal("0")
+            (total_actual_volume / total_planned_volume).quantize(quant) if total_planned_volume > 0 else Decimal("0")
         )
         submission_rate = (
-            Decimal((total_planned - no_report) / total_planned * 100) if total_planned > 0 else Decimal("0")
+            (Decimal(total_planned - no_report) / Decimal(total_planned)).quantize(quant)
+            if total_planned > 0
+            else Decimal("0")
         )
 
         return {
@@ -192,6 +236,12 @@ class ReconciliationService(BaseService):
         total_summaries = 0
 
         for hid in housing_ids:
+            # Idempotency: a re-run for the same (date, housing) replaces the
+            # previous results/summary instead of appending duplicates. The
+            # deletes share the transaction committed by the inserts below.
+            await self.reconciliation_manager.delete_by_date_and_housing(target_date, hid)
+            await self.daily_summary_manager.delete_by_date_and_housing(target_date, hid)
+
             matches = await self._match_plans_and_facts(target_date, hid)
             results_data = []
 

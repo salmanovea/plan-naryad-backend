@@ -1,5 +1,6 @@
 from src.config.admin.categories import CATEGORY_CONTRACTORS
 from src.config.admin.model_admin.base_admin import BaseAdmin
+from src.models.dbo.tables.contract import Contract
 from src.models.dbo.tables.contractor import Contractor, ContractorAssignment
 
 
@@ -60,6 +61,7 @@ class ContractorAssignmentAdmin(BaseAdmin, model=ContractorAssignment):  # type:
         ContractorAssignment.housing,
         ContractorAssignment.section,
         ContractorAssignment.work_group,
+        ContractorAssignment.source,
     ]
     column_details_list = [
         ContractorAssignment.id,
@@ -68,6 +70,7 @@ class ContractorAssignmentAdmin(BaseAdmin, model=ContractorAssignment):  # type:
         ContractorAssignment.section,
         ContractorAssignment.work_group,
         ContractorAssignment.work_type_ids,
+        ContractorAssignment.source,
     ]
     form_columns = [
         ContractorAssignment.contractor,
@@ -77,3 +80,36 @@ class ContractorAssignmentAdmin(BaseAdmin, model=ContractorAssignment):  # type:
         ContractorAssignment.work_type_ids,
     ]
     column_sortable_list: list = []
+
+
+class ContractAdmin(BaseAdmin, model=Contract):  # type: ignore[call-arg]
+    category = CATEGORY_CONTRACTORS
+    name = "Договор"
+    name_plural = "Договоры"
+    icon = "fa-solid fa-file-contract"
+
+    column_list = [
+        Contract.id,
+        Contract.contractor,
+        Contract.name,
+        Contract.subject,
+        Contract.is_warranty_letter,
+        Contract.raport_id,
+    ]
+    column_details_list = [
+        Contract.id,
+        Contract.contractor,
+        Contract.name,
+        Contract.subject,
+        Contract.is_warranty_letter,
+        Contract.raport_id,
+    ]
+    form_columns = [
+        Contract.contractor,
+        Contract.name,
+        Contract.subject,
+        Contract.is_warranty_letter,
+        Contract.raport_id,
+    ]
+    column_searchable_list = [Contract.name, Contract.subject, Contract.raport_id]
+    column_sortable_list = [Contract.name]
