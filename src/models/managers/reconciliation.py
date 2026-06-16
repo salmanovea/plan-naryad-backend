@@ -1,8 +1,10 @@
+from datetime import date
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from src.api.schemes import PaginationParams
 from src.models.dbo.tables.contractor import Contractor
@@ -21,57 +23,32 @@ class ReconciliationResultManager(BaseManager[ReconciliationResult]):
     def __init__(self, db: AsyncSession):
         super().__init__(db)
 
-    def _select_with_names(self):
-        return (
-            select(
-                ReconciliationResult,
-                Housing.name.label("housing_name"),
-                Section.name.label("section_name"),
-                Floor.name.label("floor_name"),
-                WorkType.name.label("work_name"),
-                Contractor.name.label("contractor_name"),
-            )
-            .join(Housing, ReconciliationResult.housing_id == Housing.id)
-            .join(Section, ReconciliationResult.section_id == Section.id)
-            .join(Floor, ReconciliationResult.floor_id == Floor.id)
-            .join(WorkType, ReconciliationResult.work_type_id == WorkType.id)
-            .join(Contractor, ReconciliationResult.contractor_id == Contractor.id)
+    def get_enriched_query(self) -> Select:
+        """Base query eager-loading the relations needed to denormalize labels.
+
+        Loads section/floor/work_type/contractor/housing so the service can fill
+        the `*_name` fields without lazy-loading inside an async context.
+        """
+        return select(ReconciliationResult).options(
+            selectinload(ReconciliationResult.section),
+            selectinload(ReconciliationResult.floor),
+            selectinload(ReconciliationResult.work_type),
+            selectinload(ReconciliationResult.contractor),
+            selectinload(ReconciliationResult.housing),
         )
 
-    @staticmethod
-    def _attach_names(result: ReconciliationResult, names: tuple) -> ReconciliationResult:
-        housing_name, section_name, floor_name, work_name, contractor_name = names
-        result.housing_name = housing_name
-        result.section_name = section_name
-        result.floor_name = floor_name
-        result.work_name = work_name
-        result.contractor_name = contractor_name
-        return result
+    async def get_enriched_by_id(self, result_id: UUID) -> Optional[ReconciliationResult]:
+        """Fetch a single result by id with its label relations eager-loaded."""
+        query = self.get_enriched_query().where(ReconciliationResult.id == result_id)
+        rows = await self.fetch(query)
+        return rows[0] if rows else None
 
-    async def search_with_names(
-        self,
-        order_by: Optional[list[str]] = None,
-        pagination: Optional[PaginationParams] = None,
-        **filters,
-    ) -> list[ReconciliationResult]:
-        """Search results and attach joined housing/section/floor/work/contractor names."""
-        stmt = self._select_with_names()
-        stmt = self.apply_filters(stmt, **filters)
-        if order_by:
-            stmt = self.apply_ordering(stmt, order_by)
-        if pagination:
-            stmt = get_paginated_query(stmt, pagination)
-
-        rows = (await self.db.execute(stmt)).all()
-        return [self._attach_names(row[0], row[1:]) for row in rows]
-
-    async def get_by_id_with_names(self, result_id: UUID) -> Optional[ReconciliationResult]:
-        """Fetch a single reconciliation result enriched with joined names."""
-        stmt = self._select_with_names().where(ReconciliationResult.id == result_id)
-        row = (await self.db.execute(stmt)).first()
-        if row is None:
-            return None
-        return self._attach_names(row[0], row[1:])
+    async def delete_by_date_and_housing(self, target_date: date, housing_id: UUID) -> int:
+        """Delete all results for a (date, housing); returns the count removed."""
+        existing = await self.search(date=target_date, housing_id=housing_id)
+        ids = [e.id for e in existing]
+        await self.bulk_delete(ids)
+        return len(ids)
 
 
 class DailySummaryManager(BaseManager[DailySummary]):
@@ -82,37 +59,9 @@ class DailySummaryManager(BaseManager[DailySummary]):
     def __init__(self, db: AsyncSession):
         super().__init__(db)
 
-    def _select_with_names(self):
-        return select(DailySummary, Housing.name.label("housing_name")).join(
-            Housing, DailySummary.housing_id == Housing.id
-        )
-
-    @staticmethod
-    def _attach_names(summary: DailySummary, housing_name: Optional[str]) -> DailySummary:
-        summary.housing_name = housing_name
-        return summary
-
-    async def search_with_names(
-        self,
-        order_by: Optional[list[str]] = None,
-        pagination: Optional[PaginationParams] = None,
-        **filters,
-    ) -> list[DailySummary]:
-        """Search summaries and attach joined housing_name label."""
-        stmt = self._select_with_names()
-        stmt = self.apply_filters(stmt, **filters)
-        if order_by:
-            stmt = self.apply_ordering(stmt, order_by)
-        if pagination:
-            stmt = get_paginated_query(stmt, pagination)
-
-        rows = (await self.db.execute(stmt)).all()
-        return [self._attach_names(row[0], row[1]) for row in rows]
-
-    async def get_by_id_with_names(self, summary_id: UUID) -> Optional[DailySummary]:
-        """Fetch a single daily summary enriched with housing_name."""
-        stmt = self._select_with_names().where(DailySummary.id == summary_id)
-        row = (await self.db.execute(stmt)).first()
-        if row is None:
-            return None
-        return self._attach_names(row[0], row[1])
+    async def delete_by_date_and_housing(self, target_date: date, housing_id: UUID) -> int:
+        """Delete all summaries for a (date, housing); returns the count removed."""
+        existing = await self.search(date=target_date, housing_id=housing_id)
+        ids = [e.id for e in existing]
+        await self.bulk_delete(ids)
+        return len(ids)

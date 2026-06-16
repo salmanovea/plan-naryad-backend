@@ -9,6 +9,8 @@ import uuid
 
 import pytest
 
+from tests.constants import API
+
 
 def _id() -> str:
     return str(uuid.uuid4())
@@ -33,7 +35,7 @@ async def test_import_projects_upserts(client, async_test_session):
         ]
     }
 
-    response = await client.post("/api/v1/sync/import/projects", json=payload)
+    response = await client.post(f"{API}/sync/import/projects", json=payload)
 
     assert response.status_code == 200
     data = response.json()["data"]
@@ -50,10 +52,10 @@ async def test_import_projects_upserts(client, async_test_session):
 async def test_import_projects_idempotent(client):
     raport_id = _id()
     payload = {"items": [{"raport_id": raport_id, "name": "A"}]}
-    await client.post("/api/v1/sync/import/projects", json=payload)
+    await client.post(f"{API}/sync/import/projects", json=payload)
 
     payload["items"][0]["name"] = "B"
-    resp = await client.post("/api/v1/sync/import/projects", json=payload)
+    resp = await client.post(f"{API}/sync/import/projects", json=payload)
 
     assert resp.status_code == 200
     assert resp.json()["data"]["upserted"] == 1
@@ -69,12 +71,12 @@ async def test_import_construction_objects_resolves_parent(client, async_test_se
     co_rid = _id()
 
     await client.post(
-        "/api/v1/sync/import/projects",
+        f"{API}/sync/import/projects",
         json={"items": [{"raport_id": project_rid, "name": "P"}]},
     )
 
     resp = await client.post(
-        "/api/v1/sync/import/construction-objects",
+        f"{API}/sync/import/construction-objects",
         json={
             "items": [
                 {
@@ -99,7 +101,7 @@ async def test_import_construction_objects_resolves_parent(client, async_test_se
 
 async def test_import_construction_objects_skips_missing_parent(client):
     resp = await client.post(
-        "/api/v1/sync/import/construction-objects",
+        f"{API}/sync/import/construction-objects",
         json={
             "items": [
                 {
@@ -126,16 +128,16 @@ async def test_import_housings_with_and_without_parent(client, async_test_sessio
     housing_no_parent = _id()
 
     await client.post(
-        "/api/v1/sync/import/projects",
+        f"{API}/sync/import/projects",
         json={"items": [{"raport_id": project_rid, "name": "P"}]},
     )
     await client.post(
-        "/api/v1/sync/import/construction-objects",
+        f"{API}/sync/import/construction-objects",
         json={"items": [{"raport_id": co_rid, "project_raport_id": project_rid, "name": "CO"}]},
     )
 
     resp = await client.post(
-        "/api/v1/sync/import/housings",
+        f"{API}/sync/import/housings",
         json={
             "items": [
                 {
@@ -178,12 +180,12 @@ async def test_import_sections_and_floors_chain(client, async_test_session):
     floor_rid = _id()
 
     await client.post(
-        "/api/v1/sync/import/housings",
+        f"{API}/sync/import/housings",
         json={"items": [{"raport_id": housing_rid, "name": "H", "complex_name": "ЖК"}]},
     )
 
     resp = await client.post(
-        "/api/v1/sync/import/sections",
+        f"{API}/sync/import/sections",
         json={
             "items": [
                 {
@@ -198,7 +200,7 @@ async def test_import_sections_and_floors_chain(client, async_test_session):
     assert resp.json()["data"]["upserted"] == 1
 
     resp = await client.post(
-        "/api/v1/sync/import/floors",
+        f"{API}/sync/import/floors",
         json={
             "items": [
                 {
@@ -229,12 +231,12 @@ async def test_import_work_catalog_chain(client, async_test_session):
     type_rid = _id()
 
     await client.post(
-        "/api/v1/sync/import/work-groups",
+        f"{API}/sync/import/work-groups",
         json={"items": [{"raport_id": group_rid, "name": "Монолит", "code": "MON"}]},
     )
 
     resp = await client.post(
-        "/api/v1/sync/import/work-types",
+        f"{API}/sync/import/work-types",
         json={
             "items": [
                 {
@@ -268,7 +270,7 @@ async def test_import_contractors_short_name_fallback(client, async_test_session
     long_name = "Очень длинное название контрагента " + "x" * 200
 
     resp = await client.post(
-        "/api/v1/sync/import/contractors",
+        f"{API}/sync/import/contractors",
         json={"items": [{"raport_id": rid, "name": long_name, "inn": "1234567890"}]},
     )
 
@@ -281,3 +283,146 @@ async def test_import_contractors_short_name_fallback(client, async_test_session
     assert len(rows) == 1
     assert len(rows[0].short_name) <= 100
     assert rows[0].name == long_name
+
+
+# ---------------------------------------------------------------------------
+# import/users
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.smoke
+async def test_import_users_upserts(client, async_test_session):
+    user_rid = _id()
+    resp = await client.post(
+        f"{API}/sync/import/users",
+        json={
+            "items": [
+                {
+                    "raport_id": user_rid,
+                    "shown_name": "Петров Пётр",
+                    "email": "petrov@fsk.ru",
+                    "is_external": False,
+                    "groups": ["controller"],
+                    "project_ids": [_id()],
+                }
+            ]
+        },
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["data"]["upserted"] == 1
+
+    from src.models import managers
+
+    rows = await managers.UserManager(async_test_session).search(raport_id=user_rid)
+    assert len(rows) == 1
+    assert rows[0].shown_name == "Петров Пётр"
+    assert rows[0].groups == ["controller"]
+    assert len(rows[0].project_ids) == 1
+
+
+# ---------------------------------------------------------------------------
+# import/contracts (parent: contractor, optional)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.smoke
+async def test_import_contracts_resolves_contractor(client, async_test_session):
+    contractor_rid, contract_rid = _id(), _id()
+    await client.post(
+        f"{API}/sync/import/contractors",
+        json={"items": [{"raport_id": contractor_rid, "name": "Подрядчик Д"}]},
+    )
+
+    resp = await client.post(
+        f"{API}/sync/import/contracts",
+        json={
+            "items": [
+                {
+                    "raport_id": contract_rid,
+                    "contractor_raport_id": contractor_rid,
+                    "name": "Договор №7",
+                    "subject": "Предмет договора",
+                    "is_warranty_letter": True,
+                }
+            ]
+        },
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["data"]["upserted"] == 1
+
+    from src.models import managers
+
+    contractor = (await managers.ContractorManager(async_test_session).search(raport_id=contractor_rid))[0]
+    rows = await managers.ContractManager(async_test_session).search(raport_id=contract_rid)
+    assert len(rows) == 1
+    assert rows[0].subject == "Предмет договора"
+    assert rows[0].is_warranty_letter is True
+    assert rows[0].contractor_id == contractor.id
+
+
+async def test_import_contracts_unknown_contractor_stored_with_null(client, async_test_session):
+    """A contract referencing an unsynced contractor is stored with a null contractor."""
+    contract_rid = _id()
+    resp = await client.post(
+        f"{API}/sync/import/contracts",
+        json={"items": [{"raport_id": contract_rid, "contractor_raport_id": _id(), "subject": "Без подрядчика"}]},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["data"]["upserted"] == 1
+
+    from src.models import managers
+
+    rows = await managers.ContractManager(async_test_session).search(raport_id=contract_rid)
+    assert len(rows) == 1
+    assert rows[0].contractor_id is None
+
+
+# ---------------------------------------------------------------------------
+# unified POST /sync/import (enum dispatcher)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.smoke
+async def test_import_all_processes_all_provided_lists(client, async_test_session):
+    """No `entities` → every provided payload list is processed; parent→child order resolves FKs."""
+    project_rid, co_rid, contractor_rid = _id(), _id(), _id()
+    body = {
+        "contractors": [{"raport_id": contractor_rid, "name": "Подрядчик X"}],
+        "projects": [{"raport_id": project_rid, "name": "ЖК Unified"}],
+        "construction_objects": [{"raport_id": co_rid, "project_raport_id": project_rid, "name": "ОС 1"}],
+    }
+
+    resp = await client.post(f"{API}/sync/import", json=body)
+
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert set(data) == {"contractors", "projects", "construction_objects"}
+    # construction object resolved its parent project despite being in the same call
+    assert data["construction_objects"] == {"received": 1, "upserted": 1, "missing_parents": 0}
+
+    from src.models import managers
+
+    assert len(await managers.WfProjectObjectManager(async_test_session).search(raport_id=co_rid)) == 1
+
+
+async def test_import_all_entities_filter(client, async_test_session):
+    """`entities` selects which provided lists run; others are ignored."""
+    project_rid, contractor_rid = _id(), _id()
+    body = {
+        "entities": ["projects"],
+        "projects": [{"raport_id": project_rid, "name": "Только проект"}],
+        "contractors": [{"raport_id": contractor_rid, "name": "Игнор"}],
+    }
+
+    resp = await client.post(f"{API}/sync/import", json=body)
+
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert set(data) == {"projects"}
+
+    from src.models import managers
+
+    assert await managers.ContractorManager(async_test_session).search(raport_id=contractor_rid) == []

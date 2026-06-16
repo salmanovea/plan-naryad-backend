@@ -46,10 +46,7 @@ async def list_reconciliation_results(
     if date_to:
         filter_data["date__lte"] = date_to
 
-    items = await service.reconciliation_manager.search_with_names(
-        order_by=["-date"], pagination=pagination, **filter_data
-    )
-    total = await service.reconciliation_manager.count(**filter_data)
+    items, total = await service.list_results(pagination=pagination, order_by=["-date"], **filter_data)
     return ListDataResponseSchema[ReconciliationResultSchema].create(
         list_data=[ReconciliationResultSchema.model_validate(i) for i in items],
         pagination=pagination,
@@ -63,10 +60,10 @@ async def get_reconciliation_result(
     result_id: UUID,
     service: ReconciliationService = Depends(get_reconciliation_service),
 ) -> DataResponseSchema[ReconciliationResultSchema]:
-    item = await service.reconciliation_manager.get_by_id_with_names(result_id)
+    item = await service.get_result(result_id)
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reconciliation result not found")
-    return DataResponseSchema[ReconciliationResultSchema](data=ReconciliationResultSchema.model_validate(item))
+    return DataResponseSchema[ReconciliationResultSchema](data=item)
 
 
 @reconciliation_router.get("/summaries", responses=get_responses(ResponseGroup.ALL_ERRORS))

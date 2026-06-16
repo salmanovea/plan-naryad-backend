@@ -6,7 +6,7 @@ from starlette.templating import Jinja2Templates
 from src.config.admin.categories import CATEGORY_SYNC
 from src.config.logger import LoggerProvider
 from src.config.postgres.db_config import get_async_session
-from src.services.sync.service import SyncService
+from src.services.sync.service import SyncReportService
 
 log = LoggerProvider().get_logger(__name__)
 
@@ -27,7 +27,7 @@ class SyncActionsAdmin(BaseView):
     async def sync_objects(self, request: Request):
         try:
             async with get_async_session() as db:
-                service = SyncService(db)
+                service = SyncReportService(db)
                 counts = await service.sync_objects()
             log.info(f"Sync objects completed: {counts}")
         except Exception as err:
@@ -41,7 +41,7 @@ class SyncActionsAdmin(BaseView):
     async def sync_work_catalog(self, request: Request):
         try:
             async with get_async_session() as db:
-                service = SyncService(db)
+                service = SyncReportService(db)
                 counts = await service.sync_work_catalog()
             log.info(f"Sync work catalog completed: {counts}")
         except Exception as err:
@@ -55,7 +55,7 @@ class SyncActionsAdmin(BaseView):
     async def sync_contractors(self, request: Request):
         try:
             async with get_async_session() as db:
-                service = SyncService(db)
+                service = SyncReportService(db)
                 counts = await service.sync_contractors()
             log.info(f"Sync contractors completed: {counts}")
         except Exception as err:

@@ -6,10 +6,12 @@ from uuid import UUID
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.api.schemes import PaginationParams
+from src.api.v1.plan.schemes import PlanItemSchema
 from src.config.postgres.db_config import get_session
 from src.config.settings import app_config
 from src.models import managers
-from src.models.dbo.tables.plan import PlanSource, PlanStatus
+from src.models.dbo.tables.plan import PlanItem, PlanSource, PlanStatus
 from src.models.dbo.tables.work import DependencyType
 from src.services.common import BaseService
 
@@ -30,6 +32,42 @@ class AutogenerationService(BaseService):
         self.contractor_assignment_manager = managers.ContractorAssignmentManager(db)
         self.contractor_manager = managers.ContractorManager(db)
         self.plan_adjustment_manager = managers.PlanAdjustmentManager(db)
+
+    @staticmethod
+    def _enrich_plan_item(item: PlanItem) -> PlanItemSchema:
+        """Map a plan item (with relations loaded) to a schema with readable labels."""
+        schema = PlanItemSchema.model_validate(item)
+        floor = item.floor
+        if floor:
+            schema.floor_number = floor.floor_number
+            schema.floor_name = floor.name or f"Этаж {floor.floor_number}"
+        schema.section_name = item.section.name if item.section else None
+        schema.work_name = item.work_type.name if item.work_type else None
+        schema.contractor_name = item.contractor.name if item.contractor else None
+        return schema
+
+    async def list_plan_items(
+        self,
+        pagination: PaginationParams,
+        order_by: List[str],
+        **filters,
+    ) -> Tuple[List[PlanItemSchema], int]:
+        """List plan items with denormalized section/floor/work/contractor names."""
+        query = self.plan_item_manager.get_enriched_query()
+        items = await self.plan_item_manager.search(query=query, order_by=order_by, pagination=pagination, **filters)
+        total = await self.plan_item_manager.count(**filters)
+        return [self._enrich_plan_item(i) for i in items], total
+
+    async def get_plan_items(self, order_by: Optional[List[str]] = None, **filters) -> List[PlanItemSchema]:
+        """Fetch plan items (no pagination) with denormalized labels."""
+        query = self.plan_item_manager.get_enriched_query()
+        items = await self.plan_item_manager.search(query=query, order_by=order_by, **filters)
+        return [self._enrich_plan_item(i) for i in items]
+
+    async def get_plan_item(self, plan_item_id: UUID) -> Optional[PlanItemSchema]:
+        """Fetch a single plan item with denormalized labels."""
+        item = await self.plan_item_manager.get_enriched_by_id(plan_item_id)
+        return self._enrich_plan_item(item) if item else None
 
     def _is_available(
         self,
@@ -124,8 +162,17 @@ class AutogenerationService(BaseService):
         completed = progress[key].get("actual_volume", Decimal("0")) if key in progress else Decimal("0")
         return daily_norm, min(daily_norm, total_volume - completed)
 
-    async def generate_daily_plan(self, housing_id: UUID, target_date: date) -> Tuple[List, List[str]]:
+    async def generate_daily_plan(
+        self,
+        housing_id: UUID,
+        target_date: date,
+        section_id: Optional[UUID] = None,
+    ) -> Tuple[List, List[str]]:
         """Generate a day plan, returns (items, reasons).
+
+        When `section_id` is given the plan is generated (and the
+        already-generated check is scoped) for that single section only;
+        otherwise the whole housing is processed.
 
         `reasons` is a human-readable list of diagnostic strings explaining
         why the plan ended up empty (no tech_sequence, no contractor
@@ -137,7 +184,11 @@ class AutogenerationService(BaseService):
             reasons.append("Дата приходится на выходной — план не генерируется.")
             return [], reasons
 
-        existing = await self.plan_item_manager.search(housing_id=housing_id, date=target_date)
+        scope: dict = {"housing_id": housing_id, "date": target_date}
+        if section_id:
+            scope["section_id"] = section_id
+
+        existing = await self.plan_item_manager.search(**scope)
         if existing:
             return existing, reasons
 
@@ -146,7 +197,10 @@ class AutogenerationService(BaseService):
             reasons.append("Корпус с таким id не найден.")
             return [], reasons
 
-        sections = await self.section_manager.search(housing_id=housing_id, order_by=["section_number"])
+        if section_id:
+            sections = await self.section_manager.search(housing_id=housing_id, id=section_id)
+        else:
+            sections = await self.section_manager.search(housing_id=housing_id, order_by=["section_number"])
         tech_sequence_items = await self.tech_sequence_manager.search(housing_id=housing_id, order_by=["order"])
 
         if not sections:
@@ -265,7 +319,7 @@ class AutogenerationService(BaseService):
         if plan_items_data:
             await self.plan_item_manager.bulk_insert(plan_items_data, is_commit=True)
             return (
-                await self.plan_item_manager.search(housing_id=housing_id, date=target_date),
+                await self.plan_item_manager.search(**scope),
                 reasons,
             )
 

@@ -6,17 +6,59 @@ from src.api.schemes import DataResponseSchema, ResponseGroup
 from src.api.v1.sync.schemes import (
     ImportConstructionObjectsRequest,
     ImportContractorsRequest,
+    ImportContractsRequest,
     ImportFloorsRequest,
     ImportHousingsRequest,
     ImportProjectsRequest,
     ImportSectionsRequest,
+    ImportUsersRequest,
     ImportWorkGroupsRequest,
     ImportWorkTypesRequest,
+    SyncImportRequest,
+    SyncRequest,
 )
-from src.services.sync.service import SyncService, get_sync_service
+from src.services.sync.service import SyncReportService, get_sync_report_service
 from src.utils.helpers import catch_all_exceptions, get_responses
 
 sync_router = APIRouter(prefix="/sync", tags=["Sync"])
+
+
+# ---------------------------------------------------------------------------
+# Unified entry points — select entities via the optional `entities` list
+# (null/empty = all). `/sync` pulls from Raport; `/sync/import` reads payload.
+# ---------------------------------------------------------------------------
+
+
+@sync_router.post(
+    "",
+    summary="Sync selected entities from Raport",
+    description="Live-sync the chosen reference entities from Raport. Omit `entities` (or leave it empty) to sync all.",
+    responses=get_responses(ResponseGroup.ALL_ERRORS),
+)
+@catch_all_exceptions
+async def sync_all(
+    payload: SyncRequest | None = None,
+    service: SyncReportService = Depends(get_sync_report_service),
+) -> DataResponseSchema[dict]:
+    entities = payload.entities if payload else None
+    result = await service.sync(entities)
+    return DataResponseSchema(data=result)
+
+
+@sync_router.post(
+    "/import",
+    summary="Import selected entities from payload",
+    description="Offline-import the chosen reference entities from the request body. "
+    "Omit `entities` to process every entity that has a payload list.",
+    responses=get_responses(ResponseGroup.ALL_ERRORS),
+)
+@catch_all_exceptions
+async def import_all(
+    payload: SyncImportRequest,
+    service: SyncReportService = Depends(get_sync_report_service),
+) -> DataResponseSchema[dict]:
+    result = await service.import_entities(payload)
+    return DataResponseSchema(data=result)
 
 
 @sync_router.post(
@@ -28,7 +70,7 @@ sync_router = APIRouter(prefix="/sync", tags=["Sync"])
 @catch_all_exceptions
 async def sync_objects(
     project_raport_id: Optional[str] = None,
-    service: SyncService = Depends(get_sync_service),
+    service: SyncReportService = Depends(get_sync_report_service),
 ) -> DataResponseSchema[dict]:
     result = await service.sync_objects(project_raport_id=project_raport_id)
     return DataResponseSchema(data=result)
@@ -42,9 +84,23 @@ async def sync_objects(
 )
 @catch_all_exceptions
 async def sync_work_catalog(
-    service: SyncService = Depends(get_sync_service),
+    service: SyncReportService = Depends(get_sync_report_service),
 ) -> DataResponseSchema[dict]:
     result = await service.sync_work_catalog()
+    return DataResponseSchema(data=result)
+
+
+@sync_router.post(
+    "/users",
+    summary="Sync users from Raport",
+    description="Pulls the user directory from Raport and upserts locally.",
+    responses=get_responses(ResponseGroup.ALL_ERRORS),
+)
+@catch_all_exceptions
+async def sync_users(
+    service: SyncReportService = Depends(get_sync_report_service),
+) -> DataResponseSchema[dict]:
+    result = await service.sync_users()
     return DataResponseSchema(data=result)
 
 
@@ -56,9 +112,57 @@ async def sync_work_catalog(
 )
 @catch_all_exceptions
 async def sync_contractors(
-    service: SyncService = Depends(get_sync_service),
+    service: SyncReportService = Depends(get_sync_report_service),
 ) -> DataResponseSchema[dict]:
     result = await service.sync_contractors()
+    return DataResponseSchema(data=result)
+
+
+@sync_router.post(
+    "/contracts",
+    summary="Sync contracts from Raport",
+    description="Pulls the flat contract list from Raport and upserts locally (contractor resolved by raport_id).",
+    responses=get_responses(ResponseGroup.ALL_ERRORS),
+)
+@catch_all_exceptions
+async def sync_contracts(
+    service: SyncReportService = Depends(get_sync_report_service),
+) -> DataResponseSchema[dict]:
+    result = await service.sync_contracts()
+    return DataResponseSchema(data=result)
+
+
+@sync_router.post(
+    "/assignments",
+    summary="Sync contractor assignments from Raport",
+    description="Pulls aggregated contractor assignments from Raport and reconciles them locally "
+    "(upsert by composite key; snapshot-delete of source='raport' rows). "
+    "Pass `housing_raport_id` to scope the sync to one housing.",
+    responses=get_responses(ResponseGroup.ALL_ERRORS),
+)
+@catch_all_exceptions
+async def sync_assignments(
+    housing_raport_id: Optional[str] = None,
+    service: SyncReportService = Depends(get_sync_report_service),
+) -> DataResponseSchema[dict]:
+    result = await service.sync_assignments(housing_raport_id=housing_raport_id)
+    return DataResponseSchema(data=result)
+
+
+@sync_router.post(
+    "/tech-sequence",
+    summary="Sync the technological sequence for a housing from Raport",
+    description="Builds the tech sequence for one housing from its calendar plan (or the default "
+    "plan-template if none): plan links → depends_on, keyed by (housing, work_type). "
+    "Reconciles source='raport' rows (volumes are preserved on re-sync).",
+    responses=get_responses(ResponseGroup.ALL_ERRORS),
+)
+@catch_all_exceptions
+async def sync_tech_sequence(
+    housing_raport_id: str,
+    service: SyncReportService = Depends(get_sync_report_service),
+) -> DataResponseSchema[dict]:
+    result = await service.sync_tech_sequence(housing_raport_id=housing_raport_id)
     return DataResponseSchema(data=result)
 
 
@@ -80,7 +184,7 @@ async def sync_contractors(
 @catch_all_exceptions
 async def import_projects(
     payload: ImportProjectsRequest,
-    service: SyncService = Depends(get_sync_service),
+    service: SyncReportService = Depends(get_sync_report_service),
 ) -> DataResponseSchema[dict]:
     result = await service.import_projects(payload.items)
     return DataResponseSchema(data=result)
@@ -94,7 +198,7 @@ async def import_projects(
 @catch_all_exceptions
 async def import_construction_objects(
     payload: ImportConstructionObjectsRequest,
-    service: SyncService = Depends(get_sync_service),
+    service: SyncReportService = Depends(get_sync_report_service),
 ) -> DataResponseSchema[dict]:
     result = await service.import_construction_objects(payload.items)
     return DataResponseSchema(data=result)
@@ -108,7 +212,7 @@ async def import_construction_objects(
 @catch_all_exceptions
 async def import_housings(
     payload: ImportHousingsRequest,
-    service: SyncService = Depends(get_sync_service),
+    service: SyncReportService = Depends(get_sync_report_service),
 ) -> DataResponseSchema[dict]:
     result = await service.import_housings(payload.items)
     return DataResponseSchema(data=result)
@@ -122,7 +226,7 @@ async def import_housings(
 @catch_all_exceptions
 async def import_sections(
     payload: ImportSectionsRequest,
-    service: SyncService = Depends(get_sync_service),
+    service: SyncReportService = Depends(get_sync_report_service),
 ) -> DataResponseSchema[dict]:
     result = await service.import_sections(payload.items)
     return DataResponseSchema(data=result)
@@ -136,7 +240,7 @@ async def import_sections(
 @catch_all_exceptions
 async def import_floors(
     payload: ImportFloorsRequest,
-    service: SyncService = Depends(get_sync_service),
+    service: SyncReportService = Depends(get_sync_report_service),
 ) -> DataResponseSchema[dict]:
     result = await service.import_floors(payload.items)
     return DataResponseSchema(data=result)
@@ -150,7 +254,7 @@ async def import_floors(
 @catch_all_exceptions
 async def import_work_groups(
     payload: ImportWorkGroupsRequest,
-    service: SyncService = Depends(get_sync_service),
+    service: SyncReportService = Depends(get_sync_report_service),
 ) -> DataResponseSchema[dict]:
     result = await service.import_work_groups(payload.items)
     return DataResponseSchema(data=result)
@@ -164,9 +268,23 @@ async def import_work_groups(
 @catch_all_exceptions
 async def import_work_types(
     payload: ImportWorkTypesRequest,
-    service: SyncService = Depends(get_sync_service),
+    service: SyncReportService = Depends(get_sync_report_service),
 ) -> DataResponseSchema[dict]:
     result = await service.import_work_types(payload.items)
+    return DataResponseSchema(data=result)
+
+
+@sync_router.post(
+    "/import/users",
+    summary="Import users from payload",
+    responses=get_responses(ResponseGroup.ALL_ERRORS),
+)
+@catch_all_exceptions
+async def import_users(
+    payload: ImportUsersRequest,
+    service: SyncReportService = Depends(get_sync_report_service),
+) -> DataResponseSchema[dict]:
+    result = await service.import_users(payload.items)
     return DataResponseSchema(data=result)
 
 
@@ -178,7 +296,21 @@ async def import_work_types(
 @catch_all_exceptions
 async def import_contractors(
     payload: ImportContractorsRequest,
-    service: SyncService = Depends(get_sync_service),
+    service: SyncReportService = Depends(get_sync_report_service),
 ) -> DataResponseSchema[dict]:
     result = await service.import_contractors(payload.items)
+    return DataResponseSchema(data=result)
+
+
+@sync_router.post(
+    "/import/contracts",
+    summary="Import contracts from payload",
+    responses=get_responses(ResponseGroup.ALL_ERRORS),
+)
+@catch_all_exceptions
+async def import_contracts(
+    payload: ImportContractsRequest,
+    service: SyncReportService = Depends(get_sync_report_service),
+) -> DataResponseSchema[dict]:
+    result = await service.import_contracts(payload.items)
     return DataResponseSchema(data=result)

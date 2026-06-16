@@ -1,9 +1,11 @@
 import pytest
 
+from tests.constants import API
+
 
 @pytest.mark.smoke
 async def test_workforce_dashboard_returns_200(client):
-    response = await client.get("/api/v1/workforce/dashboard")
+    response = await client.get(f"{API}/workforce/dashboard")
 
     assert response.status_code == 200
     body = response.json()
@@ -15,7 +17,7 @@ async def test_workforce_dashboard_returns_200(client):
 
 @pytest.mark.smoke
 async def test_list_wf_projects_returns_200(client):
-    response = await client.get("/api/v1/workforce/projects")
+    response = await client.get(f"{API}/workforce/projects")
 
     assert response.status_code == 200
     body = response.json()
@@ -24,7 +26,7 @@ async def test_list_wf_projects_returns_200(client):
 
 @pytest.mark.smoke
 async def test_list_violations_returns_200(client):
-    response = await client.get("/api/v1/workforce/violations")
+    response = await client.get(f"{API}/workforce/violations")
 
     assert response.status_code == 200
     body = response.json()
@@ -33,7 +35,7 @@ async def test_list_violations_returns_200(client):
 
 @pytest.mark.smoke
 async def test_list_norms_returns_200(client):
-    response = await client.get("/api/v1/workforce/norms")
+    response = await client.get(f"{API}/workforce/norms")
 
     assert response.status_code == 200
     body = response.json()
@@ -41,7 +43,7 @@ async def test_list_norms_returns_200(client):
 
 
 async def test_get_wf_project_not_found_returns_404(client):
-    response = await client.get("/api/v1/workforce/projects/00000000-0000-0000-0000-000000000000")
+    response = await client.get(f"{API}/workforce/projects/00000000-0000-0000-0000-000000000000")
 
     assert response.status_code == 404
     assert response.json()["code"] == "404"
@@ -49,7 +51,7 @@ async def test_get_wf_project_not_found_returns_404(client):
 
 async def test_create_wf_project_returns_201(client):
     response = await client.post(
-        "/api/v1/workforce/projects",
+        f"{API}/workforce/projects",
         json={"name": "Тестовый проект", "project_class": "Комфорт"},
     )
 
@@ -60,7 +62,7 @@ async def test_create_wf_project_returns_201(client):
 
 
 async def test_scan_violations_returns_200(client):
-    response = await client.post("/api/v1/workforce/violations/scan")
+    response = await client.post(f"{API}/workforce/violations/scan")
 
     assert response.status_code == 200
     body = response.json()
@@ -68,7 +70,7 @@ async def test_scan_violations_returns_200(client):
 
 
 async def test_system_problems_returns_200(client):
-    response = await client.get("/api/v1/workforce/system-problems")
+    response = await client.get(f"{API}/workforce/system-problems")
 
     assert response.status_code == 200
     body = response.json()

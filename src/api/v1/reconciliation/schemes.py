@@ -36,6 +36,7 @@ class ReconciliationResultSchema(IDMixinSchema):
     housing_name: Optional[str] = None
     section_name: Optional[str] = None
     floor_name: Optional[str] = None
+    floor_number: Optional[int] = None
     work_name: Optional[str] = None
     contractor_name: Optional[str] = None
 

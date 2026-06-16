@@ -3,7 +3,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, List, Optional
 from uuid import UUID
 
-from sqlalchemy import ARRAY, ForeignKey, Integer, Numeric, String
+from sqlalchemy import ARRAY, ForeignKey, Index, Integer, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.dbo.mixins import IDMixin, RaportMixin
@@ -80,6 +80,16 @@ class TechSequenceItem(IDMixin, Base):
     estimated_days: Mapped[int] = mapped_column(Integer, nullable=False)
     daily_norm_volume: Mapped[Decimal] = mapped_column(Numeric(12, 4), nullable=False)
     total_volume: Mapped[Decimal] = mapped_column(Numeric(12, 4), nullable=False)
+    source: Mapped[str] = mapped_column(String(20), default="manual", nullable=False)
 
     housing: Mapped["Housing"] = relationship()  # type: ignore[name-defined]
     work_type: Mapped["WorkType"] = relationship(back_populates="tech_sequence_items")
+
+    __table_args__ = (
+        Index(
+            "uq_tech_sequence_items_key",
+            "housing_id",
+            "work_type_id",
+            unique=True,
+        ),
+    )
