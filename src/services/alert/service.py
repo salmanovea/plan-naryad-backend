@@ -330,7 +330,7 @@ class AlertService(BaseService):
 
         return escalated
 
-    async def acknowledge_alert(self, alert_id: UUID, user_id: str) -> Optional[dict]:
+    async def acknowledge_alert(self, alert_id: UUID, user_id: str) -> Optional[Alert]:
         alert = await self.alert_manager.get_by_id(alert_id)
         if alert:
             await self.alert_manager.update_by_id(

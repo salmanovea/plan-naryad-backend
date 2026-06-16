@@ -98,6 +98,14 @@ jobs:
       PROJECT_OPENAPI_URL: /api/openapi.json
       MAX_ITEMS_PER_CONTRACTOR: "10"
       KEYCLOAK_VERIFY_SSL: "false"
+      # Raport ecosystem — SyncReportService builds a ReportApi() on construction,
+      # which raises unless a base URL is present. Tests mock the HTTP layer, so a
+      # dummy URL is enough; no real Raport service is contacted.
+      REPORT_API_URL: http://localhost:8001
+      REPORT_KEYCLOAK_CLIENT_ID: local
+      REPORT_KEYCLOAK_CLIENT_SECRET: ""
+      REPORT_KEYCLOAK_USERNAME: ci
+      REPORT_KEYCLOAK_PASSWORD: ci
 
     steps:
       - uses: actions/checkout@v4

@@ -79,7 +79,7 @@ class ContractorAssignmentAdmin(BaseAdmin, model=ContractorAssignment):  # type:
         ContractorAssignment.work_group,
         ContractorAssignment.work_type_ids,
     ]
-    column_sortable_list: list = []
+    column_sortable_list = []
 
 
 class ContractAdmin(BaseAdmin, model=Contract):  # type: ignore[call-arg]

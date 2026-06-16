@@ -235,7 +235,7 @@ class WorkforceService(BaseService):
             plans = await self._get_plans(project.id, bp.period_month, obj.id)
             wt_rows = self._build_work_type_rows(obj_items, norms, f30, f7, plans)
 
-            obj_net = sum(r.net_bdr for r in wt_rows)
+            obj_net = sum((r.net_bdr for r in wt_rows), Decimal(0))
             obj_req = sum(r.required_headcount for r in wt_rows if r.required_headcount) or None
             obj_plan = sum(r.plan_report for r in wt_rows if r.plan_report) or None
             obj_f30 = sum(r.fact_30d for r in wt_rows)
@@ -274,7 +274,7 @@ class WorkforceService(BaseService):
         agg_plans = await self._get_plans(project.id, bp.period_month)
         agg_rows = self._build_work_type_rows(all_items, norms, agg_f30, agg_f7, agg_plans)
 
-        p_net = sum(r.net_bdr for r in agg_rows)
+        p_net = sum((r.net_bdr for r in agg_rows), Decimal(0))
         p_req = sum(r.required_headcount for r in agg_rows if r.required_headcount) or None
         p_plan = sum(r.plan_report for r in agg_rows if r.plan_report) or None
         p_f30 = sum(r.fact_30d for r in agg_rows)
