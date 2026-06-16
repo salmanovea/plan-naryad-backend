@@ -41,8 +41,7 @@ async def list_plan_items(
     if date_to:
         filter_data["date__lte"] = date_to
 
-    items = await service.plan_item_manager.search(order_by=["-date"], pagination=pagination, **filter_data)
-    total = await service.plan_item_manager.count(**filter_data)
+    items, total = await service.list_plan_items(pagination=pagination, order_by=["-date"], **filter_data)
     return ListDataResponseSchema[PlanItemSchema].create(
         list_data=[PlanItemSchema.model_validate(i) for i in items],
         pagination=pagination,
@@ -55,9 +54,13 @@ async def list_plan_items(
 async def get_daily_plan(
     target_date: date = Query(..., description="Date to get plan for"),
     housing_id: UUID = Query(..., description="Housing ID"),
+    section_id: UUID = Query(None, description="Optional section filter within the housing"),
     service: AutogenerationService = Depends(get_plan_service),
 ) -> DataResponseSchema[DailyPlanResponse]:
-    items = await service.plan_item_manager.search(date=target_date, housing_id=housing_id)
+    search_kwargs: dict = {"date": target_date, "housing_id": housing_id}
+    if section_id:
+        search_kwargs["section_id"] = section_id
+    items = await service.get_plan_items(**search_kwargs)
     housing = await service.housing_manager.get_by_id(housing_id)
     return DataResponseSchema[DailyPlanResponse](
         data=DailyPlanResponse(
@@ -65,7 +68,7 @@ async def get_daily_plan(
             housing_id=housing_id,
             housing_name=housing.name if housing else None,
             total_items=len(items),
-            items=[PlanItemSchema.model_validate(i) for i in items],
+            items=items,
         )
     )
 
@@ -82,7 +85,7 @@ async def get_contractor_plan(
     if housing_id:
         filter_kwargs["housing_id"] = housing_id
 
-    items = await service.plan_item_manager.search(**filter_kwargs)
+    items = await service.get_plan_items(**filter_kwargs)
     contractor = await service.contractor_manager.get_by_id(contractor_id)
     return DataResponseSchema[ContractorPlanResponse](
         data=ContractorPlanResponse(
@@ -90,7 +93,7 @@ async def get_contractor_plan(
             contractor_id=contractor_id,
             contractor_name=contractor.name if contractor else None,
             housing_id=housing_id,
-            items=[PlanItemSchema.model_validate(i) for i in items],
+            items=items,
             total_items=len(items),
         )
     )
@@ -102,7 +105,7 @@ async def generate_plan(
     body: GeneratePlanRequest,
     service: AutogenerationService = Depends(get_plan_service),
 ) -> DataResponseSchema[GeneratePlanResponse]:
-    items, reasons = await service.generate_daily_plan(body.housing_id, body.date)
+    items, reasons = await service.generate_daily_plan(body.housing_id, body.date, body.section_id)
     if items:
         message = f"Сгенерировано позиций: {len(items)} на {body.date}."
     else:
@@ -133,10 +136,10 @@ async def get_plan_item(
     plan_item_id: UUID,
     service: AutogenerationService = Depends(get_plan_service),
 ) -> DataResponseSchema[PlanItemSchema]:
-    item = await service.plan_item_manager.get_by_id(plan_item_id)
+    item = await service.get_plan_item(plan_item_id)
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan item not found")
-    return DataResponseSchema[PlanItemSchema](data=PlanItemSchema.model_validate(item))
+    return DataResponseSchema[PlanItemSchema](data=item)
 
 
 @plan_router.post("/{plan_item_id}/confirm", responses=get_responses(ResponseGroup.ALL_ERRORS))

@@ -17,6 +17,7 @@ from src.models.dbo.tables.plan import PlanSource, PlanStatus
 class GeneratePlanRequest(BaseModel):
     date: date
     housing_id: UUID
+    section_id: Optional[UUID] = None
 
 
 class ConfirmPlanRequest(BaseModel):
@@ -64,7 +65,9 @@ class PlanItemSchema(IDMixinSchema):
     status: Optional[str] = None
     work_name: Optional[str] = None
     section_name: Optional[str] = None
+    floor_name: Optional[str] = None
     floor_number: Optional[int] = None
+    contractor_name: Optional[str] = None
 
 
 class GeneratePlanResponse(BaseModel):

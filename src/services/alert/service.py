@@ -1,17 +1,50 @@
 from datetime import date, datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from uuid import UUID
 
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.api.schemes import PaginationParams
+from src.api.v1.alert.schemes import AlertSchema
 from src.config.logger import LoggerProvider
 from src.config.postgres.db_config import get_session
 from src.models import managers
+from src.models.dbo.tables.alert import Alert, AlertLevel, AlertType
 from src.models.dbo.tables.reconciliation import ReconciliationPattern, ReconciliationStatus
 from src.services.common import BaseService
 
 log = LoggerProvider().get_logger(__name__)
+
+# Single source of truth for alert_type -> severity level (see spec-alerts.md §2).
+# Used on generation so the level never drifts from the alert semantics and the
+# frontend can mirror this table for labels/colors. A type missing from the map
+# falls back to WARNING (never INFO) so an unmapped critical never looks benign.
+ALERT_LEVEL_MAP: Dict[str, AlertLevel] = {
+    AlertType.A01: AlertLevel.INFO,
+    AlertType.A02: AlertLevel.WARNING,
+    AlertType.A03: AlertLevel.INFO,
+    AlertType.A04: AlertLevel.WARNING,
+    AlertType.A05: AlertLevel.WARNING,
+    AlertType.A06: AlertLevel.INFO,
+    AlertType.A07: AlertLevel.CRITICAL,
+    AlertType.A10: AlertLevel.CRITICAL,
+    AlertType.A11: AlertLevel.CRITICAL,
+    AlertType.A12: AlertLevel.WARNING,
+    AlertType.A13: AlertLevel.CRITICAL,
+    AlertType.A14: AlertLevel.WARNING,
+    AlertType.A15: AlertLevel.CRITICAL,
+    AlertType.A20: AlertLevel.CRITICAL,
+    AlertType.A21: AlertLevel.CRITICAL,
+    AlertType.A22: AlertLevel.WARNING,
+    AlertType.A23: AlertLevel.WARNING,
+}
+
+
+def level_for_alert_type(alert_type: str) -> str:
+    """Return the severity level for an alert type, defaulting to WARNING."""
+    return ALERT_LEVEL_MAP.get(alert_type, AlertLevel.WARNING).value
+
 
 ESCALATION_RULES: Dict[str, List] = {
     "A02": [(4, "DS"), (8, "DP")],
@@ -32,6 +65,31 @@ class AlertService(BaseService):
         self.contractor_manager = managers.ContractorManager(db)
         self.housing_manager = managers.HousingManager(db)
         self.tech_sequence_manager = managers.TechSequenceItemManager(db)
+
+    @staticmethod
+    def _enrich_alert(alert: Alert) -> AlertSchema:
+        """Map an alert (with relations loaded) to a schema with readable labels."""
+        schema = AlertSchema.model_validate(alert)
+        schema.housing_name = alert.housing.name if alert.housing else None
+        schema.contractor_name = alert.contractor.name if alert.contractor else None
+        return schema
+
+    async def list_alerts(
+        self,
+        pagination: PaginationParams,
+        order_by: List[str],
+        **filters,
+    ) -> Tuple[List[AlertSchema], int]:
+        """List alerts with denormalized housing/contractor names."""
+        query = self.alert_manager.get_enriched_query()
+        items = await self.alert_manager.search(query=query, order_by=order_by, pagination=pagination, **filters)
+        total = await self.alert_manager.count(**filters)
+        return [self._enrich_alert(i) for i in items], total
+
+    async def get_alert(self, alert_id: UUID) -> Optional[AlertSchema]:
+        """Fetch a single alert with denormalized housing/contractor names."""
+        alert = await self.alert_manager.get_enriched_by_id(alert_id)
+        return self._enrich_alert(alert) if alert else None
 
     async def generate_daily_alerts(self, housing_id: UUID, alert_date: date) -> List:
         log.info(f"Generating daily alerts for housing {housing_id}, date {alert_date}")
@@ -70,7 +128,7 @@ class AlertService(BaseService):
                     alerts.append(
                         {
                             "alert_type": "A05",
-                            "level": "warning",
+                            "level": level_for_alert_type("A05"),
                             "date": alert_date,
                             "housing_id": housing_id,
                             "contractor_id": contractor_id,
@@ -85,7 +143,7 @@ class AlertService(BaseService):
             alerts.append(
                 {
                     "alert_type": "A06",
-                    "level": "info",
+                    "level": level_for_alert_type("A06"),
                     "date": alert_date,
                     "housing_id": housing_id,
                     "recipient_role": "RS",
@@ -130,7 +188,7 @@ class AlertService(BaseService):
                 alerts.append(
                     {
                         "alert_type": "A07",
-                        "level": "critical",
+                        "level": level_for_alert_type("A07"),
                         "date": alert_date,
                         "housing_id": housing_id,
                         "contractor_id": contractor_id,
@@ -164,7 +222,7 @@ class AlertService(BaseService):
                 alerts.append(
                     {
                         "alert_type": "A12",
-                        "level": "warning",
+                        "level": level_for_alert_type("A12"),
                         "date": alert_date,
                         "housing_id": housing_id,
                         "contractor_id": item.contractor_id,
@@ -186,7 +244,7 @@ class AlertService(BaseService):
                 alerts.append(
                     {
                         "alert_type": "A15",
-                        "level": "critical",
+                        "level": level_for_alert_type("A15"),
                         "date": alert_date,
                         "housing_id": housing_id,
                         "recipient_role": "RS",
@@ -211,7 +269,7 @@ class AlertService(BaseService):
                 alerts.append(
                     {
                         "alert_type": "A22",
-                        "level": "warning",
+                        "level": level_for_alert_type("A22"),
                         "date": alert_date,
                         "housing_id": housing_id,
                         "recipient_role": "ADMIN",
@@ -235,7 +293,10 @@ class AlertService(BaseService):
         rules = ESCALATION_RULES.get(alert.alert_type, [])
 
         for i, (hours_needed, next_role) in enumerate(rules):
-            if hours_since >= hours_needed and alert.escalation_level <= i:
+            # escalation_level starts at 1 (level 1 = initial recipient); step i
+            # raises it to level i + 2. Apply a step only if the alert has not
+            # already reached that level — note the default level is 1, not 0.
+            if hours_since >= hours_needed and alert.escalation_level <= i + 1:
                 alert.escalation_level = i + 2
                 alert.escalated_at = datetime.now()
                 alert.recipient_role = next_role
@@ -255,7 +316,9 @@ class AlertService(BaseService):
             rules = ESCALATION_RULES.get(alert.alert_type, [])
             hours_since = (now - alert.created_at).total_seconds() / 3600
             for i, (hours_needed, next_role) in enumerate(rules):
-                if hours_since >= hours_needed and alert.escalation_level <= i:
+                # escalation_level starts at 1; step i raises it to level i + 2.
+                # Skip steps already applied (default level is 1, not 0).
+                if hours_since >= hours_needed and alert.escalation_level <= i + 1:
                     alert.escalation_level = i + 2
                     alert.escalated_at = now
                     alert.recipient_role = next_role
@@ -267,7 +330,7 @@ class AlertService(BaseService):
 
         return escalated
 
-    async def acknowledge_alert(self, alert_id: UUID, user_id: str) -> Optional[dict]:
+    async def acknowledge_alert(self, alert_id: UUID, user_id: str) -> Optional[Alert]:
         alert = await self.alert_manager.get_by_id(alert_id)
         if alert:
             await self.alert_manager.update_by_id(

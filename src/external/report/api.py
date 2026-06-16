@@ -1,9 +1,9 @@
 """
 HTTP client for the Raport reference APIs.
 
-Copied into src/external/report/client.py by the report-microservice skill.
-Every method is a thin wrapper over `_request`, which obtains a fresh Keycloak
-Bearer token via `get_report_access_token()` on every call (no caching).
+`ReportApi` owns everything related to talking to Raport: it obtains a fresh
+Keycloak Bearer token via `get_report_access_token()` on every call (no caching),
+issues the request, and paginates list endpoints via `list_all`.
 
 Method names follow the convention `<verb>_<entity>[_<by_parent>]`:
   - list_projects()                     → GET /api/v1/projects
@@ -11,7 +11,8 @@ Method names follow the convention `<verb>_<entity>[_<by_parent>]`:
   - list_contractor_contracts(...)      → GET /api/v1/contractors/{contractor_id}/contracts/
 
 Consumers pass extra query parameters (pagination, search, ordering, filters)
-as keyword arguments.
+as keyword arguments. For full-list retrieval use `list_all("<method>", **params)`,
+which walks every page and returns the flat list of items.
 """
 
 from typing import Any
@@ -34,8 +35,10 @@ class ReportApiError(RuntimeError):
         self.status_code = status_code
 
 
-class ReportClient:
+class ReportApi:
     """Thin HTTP client around the Raport reference endpoints."""
+
+    _PER_PAGE = 200
 
     def __init__(self, base_url: str | None = None, timeout: float = 30.0):
         base = (base_url or app_config.report_api_url or "").rstrip("/")
@@ -68,6 +71,25 @@ class ReportClient:
             raise ReportApiError(response.status_code, response.text[:500])
 
         return response.json()
+
+    async def list_all(self, method_name: str, **kwargs: Any) -> list[dict]:
+        """Paginate through a Raport list endpoint and return all items as a flat list.
+
+        Stops when the envelope's `pagination.next_page` is null/absent (or a page
+        comes back empty). The Raport pagination envelope uses
+        `{total_items, page, items_per_page, next_page, prev_page, total_pages}`.
+        """
+        method = getattr(self, method_name)
+        page, results = 1, []
+        while True:
+            resp = await method(page=page, per_page=self._PER_PAGE, **kwargs)
+            items = resp.get("data", [])
+            results.extend(items)
+            next_page = (resp.get("pagination") or {}).get("next_page")
+            if not next_page or not items:
+                break
+            page = next_page
+        return results
 
     # ------------------------------------------------------------------
     # Chain 1 — Project → Queue → Construction Object → Housing → Section → Floor
@@ -115,8 +137,17 @@ class ReportClient:
     # Chain 2 — Contractor → Contract
     # ------------------------------------------------------------------
 
+    async def list_users(self, **params: Any) -> Any:
+        return await self._request("GET", "/api/v1/users", params=params)
+
     async def list_contractors(self, **params: Any) -> Any:
         return await self._request("GET", "/api/v1/contractors", params=params)
+
+    async def list_contracts(self, **params: Any) -> Any:
+        return await self._request("GET", "/api/v1/contracts", params=params)
+
+    async def list_assignments_aggregated(self, **params: Any) -> Any:
+        return await self._request("GET", "/api/v1/contractor-works/assignments-aggregated", params=params)
 
     async def list_project_contractors(self, project_id: UUID, **params: Any) -> Any:
         return await self._request("GET", f"/api/v1/contractors/project/{project_id}", params=params)
@@ -190,6 +221,22 @@ class ReportClient:
 
     async def get_works_structure(self, **params: Any) -> Any:
         return await self._request("GET", "/api/v1/works/structure", params=params)
+
+    # ------------------------------------------------------------------
+    # Plans — source of the technological sequence (plan.links[])
+    # ------------------------------------------------------------------
+
+    async def check_calendar_plan(self, **params: Any) -> Any:
+        return await self._request("GET", "/api/v1/calendar-plans/check", params=params)
+
+    async def get_calendar_plan(self, calendar_plan_id: str, **params: Any) -> Any:
+        return await self._request("GET", f"/api/v1/calendar-plans/{calendar_plan_id}", params=params)
+
+    async def list_plan_templates(self, **params: Any) -> Any:
+        return await self._request("GET", "/api/v1/plan-templates", params=params)
+
+    async def get_plan_template_data(self, plan_template_id: str, **params: Any) -> Any:
+        return await self._request("GET", f"/api/v1/plan-templates/{plan_template_id}/data", params=params)
 
     # ------------------------------------------------------------------
     # Chain 4 — Position

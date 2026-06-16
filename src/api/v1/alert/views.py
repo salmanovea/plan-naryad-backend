@@ -37,8 +37,7 @@ async def list_alerts(
     if date_to:
         filter_data["date__lte"] = date_to
 
-    items = await service.alert_manager.search(order_by=["-date"], pagination=pagination, **filter_data)
-    total = await service.alert_manager.count(**filter_data)
+    items, total = await service.list_alerts(pagination=pagination, order_by=["-date"], **filter_data)
     return ListDataResponseSchema[AlertSchema].create(
         list_data=[AlertSchema.model_validate(i) for i in items],
         pagination=pagination,
@@ -52,10 +51,10 @@ async def get_alert(
     alert_id: UUID,
     service: AlertService = Depends(get_alert_service),
 ) -> DataResponseSchema[AlertSchema]:
-    item = await service.alert_manager.get_by_id(alert_id)
+    item = await service.get_alert(alert_id)
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alert not found")
-    return DataResponseSchema[AlertSchema](data=AlertSchema.model_validate(item))
+    return DataResponseSchema[AlertSchema](data=item)
 
 
 @alert_router.post("/generate", responses=get_responses(ResponseGroup.ALL_ERRORS))
@@ -83,8 +82,10 @@ async def acknowledge_alert(
     alert = await service.acknowledge_alert(alert_id, body.acknowledged_by)
     if not alert:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alert not found")
-    updated = await service.alert_manager.get_by_id(alert_id)
-    return DataResponseSchema[AlertSchema](data=AlertSchema.model_validate(updated))
+    updated = await service.get_alert(alert_id)
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alert not found")
+    return DataResponseSchema[AlertSchema](data=updated)
 
 
 @alert_router.post("/escalation/run", responses=get_responses(ResponseGroup.ALL_ERRORS))
