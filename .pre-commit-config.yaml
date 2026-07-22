@@ -6,9 +6,17 @@ repos:
         args: [ --fix ]
       - id: ruff-format
 
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.15.0
+   # Run mypy from the local environment (not pre-commit's isolated venv) so it
+  # sees the project's installed dependencies — fastapi, sqlalchemy, pydantic.
+  # Without them every third-party type collapses to Any and real type errors
+  # stay hidden locally while CI (which runs `mypy src` with deps installed)
+  # fails. Requires `pip install -r requirements.txt -r requirements-dev.txt`.
+  - repo: local
     hooks:
       - id: mypy
-        args: [--exclude=.*]
-        exclude: ^(\.claude/|migrations/)
+        name: mypy
+        entry: mypy
+        language: system
+        types: [python]
+        pass_filenames: false
+        args: [src]

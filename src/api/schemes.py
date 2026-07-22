@@ -2,8 +2,6 @@ from datetime import datetime
 from enum import Enum
 from uuid import UUID
 from typing import (
-    Any,
-    Dict,
     Generic,
     List,
     Optional,
@@ -214,7 +212,7 @@ class ListDataResponseSchema(Response200Schema, Generic[T]):
     @classmethod
     def create(
         cls,
-        list_data: List[Dict[str, Any]],
+        list_data: List[T],
         pagination: PaginationParams | None = None,
         total: int | None = None,
         message: str = "Success",

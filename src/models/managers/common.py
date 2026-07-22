@@ -375,7 +375,7 @@ class BaseManager(Generic[T]):
                 numeric_part = cast(func.substring(order_by_column, r"([0-9]+)"), DECIMAL)
                 sort_column = case(
                     (
-                        func.regexp_match(order_by_column, r"[0-9]+") is not None,
+                        func.regexp_match(order_by_column, r"[0-9]+").isnot(None),
                         numeric_part,
                     ),
                     else_=None,
@@ -399,7 +399,7 @@ class BaseManager(Generic[T]):
 
     async def count(
         self,
-        query: Select = None,
+        query: Optional[Select] = None,
         search: Optional[str] = None,
         group_by_field: Optional[str] = None,
         **filters,
@@ -423,11 +423,11 @@ class BaseManager(Generic[T]):
             count_query = select(func.count()).select_from(query.subquery())
 
         result = await self.db.execute(count_query)
-        return result.scalar()
+        return int(result.scalar() or 0)
 
     async def search(
         self,
-        query: Select = None,
+        query: Optional[Select] = None,
         order_by: Optional[list[str]] = None,
         pagination: Optional[PaginationParams] = None,
         with_scalars: bool = True,
@@ -488,7 +488,7 @@ class BaseManager(Generic[T]):
 
         return updated_entities
 
-    async def bulk_delete(self, entity_ids: list[Union[int, UUID]]) -> None:
+    async def bulk_delete(self, entity_ids: Sequence[Union[int, UUID]]) -> None:
         """Delete multiple entities by id in a single statement."""
         if not entity_ids:
             return

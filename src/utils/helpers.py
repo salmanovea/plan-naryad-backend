@@ -1,6 +1,7 @@
 import math
 from functools import wraps
 from typing import (
+    Any,
     Type,
     List,
     Union,
@@ -26,8 +27,8 @@ from src.api.schemes import (
     ResponseGroup,
     RESPONSE_GROUPS,
     RESPONSE_SCHEMAS,
-    ResponseSchemaInfo,
     PaginationParams,
+    PaginationSchema,
 )
 from src.config.logger import LoggerProvider
 
@@ -38,7 +39,7 @@ log = LoggerProvider().get_logger(__name__)
 
 def get_responses(
     groups: Union[List[ResponseGroup], ResponseGroup],
-) -> dict[int | str, ResponseSchemaInfo]:
+) -> dict[int | str, dict[str, Any]]:
     """
     Returns a dictionary of OpenAPI-compatible response schemas based on one or more response groups.
 
@@ -56,7 +57,12 @@ def get_responses(
     for group in groups:
         response_codes.update(RESPONSE_GROUPS[group])
 
-    return {code: RESPONSE_SCHEMAS[code] for code in response_codes if code in RESPONSE_SCHEMAS}
+    # ResponseSchemaInfo is a TypedDict, i.e. a plain dict at runtime; FastAPI's
+    # `responses` parameter is typed as dict[..., dict[str, Any]], so cast to match.
+    return t_cast(
+        dict[int | str, dict[str, Any]],
+        {code: RESPONSE_SCHEMAS[code] for code in response_codes if code in RESPONSE_SCHEMAS},
+    )
 
 
 def catch_all_exceptions(func: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable[JSONResponse | R]]:
@@ -168,7 +174,7 @@ def safe_ilike(col, val: str):
     return col.ilike(f"%{val}%")
 
 
-def get_pagination_info(pagination: PaginationParams | None, total: int | None) -> dict[str, int | bool | None]:
+def get_pagination_info(pagination: PaginationParams | None, total: int | None) -> PaginationSchema | None:
     """
     Generate pagination info based on the current page, items per page, and total items.
 
@@ -177,24 +183,17 @@ def get_pagination_info(pagination: PaginationParams | None, total: int | None) 
         total: The total number of items.
 
     Returns:
-        A dictionary containing pagination info.
+        A PaginationSchema, or None when there is nothing to paginate.
     """
     if pagination is None or total is None:
-        return {
-            "total_items": total,
-            "page": None,
-            "items_per_page": None,
-            "next_page": None,
-            "prev_page": None,
-            "total_pages": None,
-        }
+        return None
     is_last_page = pagination.page * pagination.per_page >= total
     total_pages = math.ceil(total / pagination.per_page) if pagination.per_page else 0
-    return {
-        "total_items": total,
-        "page": pagination.page,
-        "items_per_page": pagination.per_page,
-        "next_page": pagination.page + 1 if not is_last_page else None,
-        "prev_page": pagination.page - 1 if pagination.page > 1 else None,
-        "total_pages": total_pages,
-    }
+    return PaginationSchema(
+        total_items=total,
+        page=pagination.page,
+        items_per_page=pagination.per_page,
+        next_page=pagination.page + 1 if not is_last_page else None,
+        prev_page=pagination.page - 1 if pagination.page > 1 else None,
+        total_pages=total_pages,
+    )
