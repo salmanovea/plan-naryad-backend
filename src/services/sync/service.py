@@ -60,6 +60,19 @@ def _trim(value: Any, max_len: int | None) -> str | None:
     return text if max_len is None else text[:max_len]
 
 
+def _dedupe_by(rows: list[dict], key: str) -> list[dict]:
+    """Drop duplicates by `key`, keeping the last occurrence.
+
+    Guards ON CONFLICT DO UPDATE against Raport pagination that occasionally
+    returns the same entity twice — Postgres refuses to touch the same row
+    twice in one statement (CardinalityViolationError).
+    """
+    seen: dict[Any, dict] = {}
+    for r in rows:
+        seen[r[key]] = r
+    return list(seen.values())
+
+
 class SyncReportService(BaseService):
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -209,6 +222,7 @@ class SyncReportService(BaseService):
                         "name": _trim(f.get("name"), 100),
                     }
                 )
+            floor_rows = _dedupe_by(floor_rows, "raport_id")
             if floor_rows:
                 await self.floor_manager.bulk_upsert(
                     floor_rows,
@@ -286,6 +300,7 @@ class SyncReportService(BaseService):
                             "description": None,
                         }
                     )
+                wt_rows = _dedupe_by(wt_rows, "raport_id")
                 if wt_rows:
                     await self.work_type_manager.bulk_upsert(
                         wt_rows,
@@ -318,6 +333,7 @@ class SyncReportService(BaseService):
                 }
             )
 
+        rows = _dedupe_by(rows, "raport_id")
         if rows:
             await self.contractor_manager.bulk_upsert(
                 rows,
@@ -356,6 +372,7 @@ class SyncReportService(BaseService):
                 }
             )
 
+        rows = _dedupe_by(rows, "raport_id")
         if rows:
             await self.contract_manager.bulk_upsert(
                 rows,
@@ -401,7 +418,7 @@ class SyncReportService(BaseService):
     async def sync_users(self) -> dict[str, int]:
         """Sync the user directory from Raport (`GET /api/v1/users`)."""
         users = await self.report.list_all("list_users")
-        rows = [self._user_row(u) for u in users]
+        rows = _dedupe_by([self._user_row(u) for u in users], "raport_id")
         if rows:
             await self.user_manager.bulk_upsert(
                 rows,
@@ -739,6 +756,7 @@ class SyncReportService(BaseService):
             }
             for i in items
         ]
+        rows = _dedupe_by(rows, "raport_id")
         if rows:
             await self.wf_project_manager.bulk_upsert(
                 rows,
@@ -765,6 +783,7 @@ class SyncReportService(BaseService):
                     "planned_end_date": i.planned_end_date,
                 }
             )
+        rows = _dedupe_by(rows, "raport_id")
         if rows:
             await self.wf_project_object_manager.bulk_upsert(
                 rows,
@@ -796,6 +815,7 @@ class SyncReportService(BaseService):
                     "description": _trim(i.description, 1000),
                 }
             )
+        rows = _dedupe_by(rows, "raport_id")
         if rows:
             await self.housing_manager.bulk_upsert(
                 rows,
@@ -822,6 +842,7 @@ class SyncReportService(BaseService):
                     "description": _trim(i.description, 500),
                 }
             )
+        rows = _dedupe_by(rows, "raport_id")
         if rows:
             await self.section_manager.bulk_upsert(
                 rows,
@@ -848,6 +869,7 @@ class SyncReportService(BaseService):
                     "description": _trim(i.description, 500),
                 }
             )
+        rows = _dedupe_by(rows, "raport_id")
         if rows:
             await self.floor_manager.bulk_upsert(
                 rows,
@@ -866,6 +888,7 @@ class SyncReportService(BaseService):
             }
             for i in items
         ]
+        rows = _dedupe_by(rows, "raport_id")
         if rows:
             await self.work_group_manager.bulk_upsert(
                 rows,
@@ -893,6 +916,7 @@ class SyncReportService(BaseService):
                     "description": _trim(i.description, 1000),
                 }
             )
+        rows = _dedupe_by(rows, "raport_id")
         if rows:
             await self.work_type_manager.bulk_upsert(
                 rows,
@@ -915,6 +939,7 @@ class SyncReportService(BaseService):
                     "description": _trim(i.description, 1000),
                 }
             )
+        rows = _dedupe_by(rows, "raport_id")
         if rows:
             await self.contractor_manager.bulk_upsert(
                 rows,
@@ -938,6 +963,7 @@ class SyncReportService(BaseService):
                     "is_warranty_letter": i.is_warranty_letter,
                 }
             )
+        rows = _dedupe_by(rows, "raport_id")
         if rows:
             await self.contract_manager.bulk_upsert(
                 rows,
@@ -962,6 +988,7 @@ class SyncReportService(BaseService):
             }
             for i in items
         ]
+        rows = _dedupe_by(rows, "raport_id")
         if rows:
             await self.user_manager.bulk_upsert(
                 rows,
