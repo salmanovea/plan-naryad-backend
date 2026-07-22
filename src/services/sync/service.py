@@ -45,6 +45,21 @@ from src.services.common import BaseService
 log = LoggerProvider().get_logger(__name__)
 
 
+def _trim(value: Any, max_len: int | None) -> str | None:
+    """Strip whitespace and clip to column length; returns None for empty/None input.
+
+    Guards against Raport values that exceed local column limits (e.g. `inn`
+    coming in as "1234567890/987654321" — longer than VARCHAR(20)). Pass
+    max_len=None for unbounded Text columns (still strips + null-normalizes).
+    """
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    return text if max_len is None else text[:max_len]
+
+
 class SyncReportService(BaseService):
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -85,9 +100,9 @@ class SyncReportService(BaseService):
 
             project_data = {
                 "raport_id": rp_id,
-                "name": rp.get("name", ""),
-                "description": rp.get("description"),
-                "project_class": rp.get("class", "Комфорт"),
+                "name": _trim(rp.get("name"), 255) or "",
+                "description": _trim(rp.get("description"), 1000),
+                "project_class": _trim(rp.get("class"), 50) or "Комфорт",
             }
             await self.wf_project_manager.bulk_upsert(
                 [project_data],
@@ -112,8 +127,8 @@ class SyncReportService(BaseService):
                     co_data = {
                         "raport_id": co_id,
                         "project_id": local_project_id,
-                        "name": co.get("name", ""),
-                        "description": co.get("description"),
+                        "name": _trim(co.get("name"), 255) or "",
+                        "description": _trim(co.get("description"), 1000),
                         "planned_end_date": co.get("planned_end_date"),
                     }
                     await self.wf_project_object_manager.bulk_upsert(
@@ -136,8 +151,8 @@ class SyncReportService(BaseService):
                         housing_data = {
                             "raport_id": h_id,
                             "construction_object_id": local_co_id,
-                            "name": h.get("name", ""),
-                            "complex_name": h.get("complex_name") or h.get("project_name") or "",
+                            "name": _trim(h.get("name"), 255) or "",
+                            "complex_name": _trim(h.get("complex_name") or h.get("project_name"), 255) or "",
                         }
                         await self.housing_manager.bulk_upsert(
                             [housing_data],
@@ -168,7 +183,7 @@ class SyncReportService(BaseService):
             section_data = {
                 "raport_id": s_id,
                 "housing_id": local_housing_id,
-                "name": s.get("name", str(s.get("number", ""))),
+                "name": _trim(s.get("name") or str(s.get("number", "")), 100) or "",
                 "section_number": s.get("number") or s.get("sort_order") or 0,
             }
             await self.section_manager.bulk_upsert(
@@ -191,7 +206,7 @@ class SyncReportService(BaseService):
                         "raport_id": str(f["id"]),
                         "section_id": local_s_id,
                         "floor_number": f.get("number") or f.get("sort_order") or 0,
-                        "name": f.get("name"),
+                        "name": _trim(f.get("name"), 100),
                     }
                 )
             if floor_rows:
@@ -206,6 +221,8 @@ class SyncReportService(BaseService):
     # Group B — work catalog
     # ------------------------------------------------------------------
 
+    _WORK_TYPE_BATCH_SIZE = 4000
+
     @staticmethod
     def _default_unit(units: list[dict] | None) -> str:
         """Pick the default unit name from a Raport Work `units[]` array."""
@@ -213,8 +230,8 @@ class SyncReportService(BaseService):
             return "шт"
         for u in units:
             if u.get("is_default"):
-                return (u.get("name") or "шт")[:20]
-        return (units[0].get("name") or "шт")[:20]
+                return _trim(u.get("name"), 20) or "шт"
+        return _trim(units[0].get("name"), 20) or "шт"
 
     async def sync_work_catalog(self) -> dict[str, int]:
         """Sync the work catalog from Raport.
@@ -239,8 +256,8 @@ class SyncReportService(BaseService):
                 rwt_id = str(rwt["id"])
                 wg_data = {
                     "raport_id": rwt_id,
-                    "name": (rwt.get("name") or "")[:255],
-                    "code": rwt_id,
+                    "name": _trim(rwt.get("name"), 255) or "",
+                    "code": rwt_id[:50],
                 }
                 await self.work_group_manager.bulk_upsert(
                     [wg_data],
@@ -263,8 +280,8 @@ class SyncReportService(BaseService):
                         {
                             "raport_id": w_id,
                             "group_id": local_wg_id,
-                            "name": (w.get("name") or "")[:255],
-                            "code": w_id,
+                            "name": _trim(w.get("name"), 255) or "",
+                            "code": w_id[:100],
                             "unit": self._default_unit(w.get("units")),
                             "description": None,
                         }
@@ -274,6 +291,7 @@ class SyncReportService(BaseService):
                         wt_rows,
                         key_field="raport_id",
                         update_fields=["name", "code", "unit", "description", "group_id"],
+                        batch_size=self._WORK_TYPE_BATCH_SIZE,
                     )
                     counts["work_types"] += len(wt_rows)
 
@@ -289,13 +307,14 @@ class SyncReportService(BaseService):
 
         rows = []
         for c in contractors:
+            name = _trim(c.get("name"), 255) or ""
             rows.append(
                 {
                     "raport_id": str(c["id"]),
-                    "name": c.get("name", ""),
-                    "short_name": c.get("short_name") or c.get("name", ""),
-                    "inn": c.get("inn"),
-                    "description": c.get("description"),
+                    "name": name,
+                    "short_name": _trim(c.get("short_name"), 100) or name[:100],
+                    "inn": _trim(c.get("inn"), 20),
+                    "description": _trim(c.get("description"), 1000),
                 }
             )
 
@@ -327,13 +346,12 @@ class SyncReportService(BaseService):
         rows = []
         for c in contracts:
             raport_contractor_id = str(c["contractor_id"]) if c.get("contractor_id") else None
-            name = c.get("name")
             rows.append(
                 {
                     "raport_id": str(c["id"]),
                     "contractor_id": contractor_map.get(raport_contractor_id) if raport_contractor_id else None,
-                    "name": name[:500] if name else None,
-                    "subject": c.get("subject"),
+                    "name": _trim(c.get("name"), 500),
+                    "subject": _trim(c.get("subject"), None),
                     "is_warranty_letter": bool(c.get("is_warranty_letter")),
                 }
             )
@@ -353,14 +371,13 @@ class SyncReportService(BaseService):
 
     @staticmethod
     def _user_row(u: dict) -> dict:
-        shown = u.get("shown_name")
         return {
             "raport_id": str(u["id"]),
-            "last_name": u.get("last_name"),
-            "first_name": u.get("first_name"),
-            "middle_name": u.get("middle_name"),
-            "shown_name": shown[:500] if shown else None,
-            "email": u.get("email"),
+            "last_name": _trim(u.get("last_name"), 255),
+            "first_name": _trim(u.get("first_name"), 255),
+            "middle_name": _trim(u.get("middle_name"), 255),
+            "shown_name": _trim(u.get("shown_name"), 500),
+            "email": _trim(u.get("email"), 255),
             "is_external": bool(u.get("is_external")),
             "groups": u.get("groups") or [],
             "project_ids": [str(p["id"]) for p in (u.get("projects") or []) if p.get("id")],
@@ -487,7 +504,7 @@ class SyncReportService(BaseService):
             a.id for a in existing if (a.contractor_id, a.housing_id, a.section_id, a.work_group_id) not in fresh_keys
         ]
         if stale_ids:
-            await self.contractor_assignment_manager.bulk_delete(stale_ids)
+            await self.contractor_assignment_manager.bulk_delete_by_batch(stale_ids)
             await self.db.commit()
         return len(stale_ids)
 
@@ -598,7 +615,7 @@ class SyncReportService(BaseService):
         existing = await self.tech_sequence_manager.search(housing_id=housing_id, source="raport")
         stale_ids = [r.id for r in existing if r.work_type_id not in fresh_work_type_ids]
         if stale_ids:
-            await self.tech_sequence_manager.bulk_delete(stale_ids)
+            await self.tech_sequence_manager.bulk_delete_by_batch(stale_ids)
             await self.db.commit()
         return len(stale_ids)
 
@@ -696,21 +713,29 @@ class SyncReportService(BaseService):
     # Payload-driven imports (xlsx dump → upsert; parents resolved by raport_id)
     # ------------------------------------------------------------------
 
+    _RESOLVE_PARENTS_CHUNK = 30000
+
     async def _resolve_parents(self, manager: BaseManager, raport_ids: Iterable[str]) -> dict[str, UUID]:
         """Build {raport_id: local_id} map for the given parent manager."""
-        ids = {rid for rid in raport_ids if rid}
+        ids = [rid for rid in {rid for rid in raport_ids if rid}]
         if not ids:
             return {}
-        rows = await manager.search(raport_id__in=list(ids))
-        return {row.raport_id: row.id for row in rows if row.raport_id}
+        result: dict[str, UUID] = {}
+        for start in range(0, len(ids), self._RESOLVE_PARENTS_CHUNK):
+            chunk = ids[start : start + self._RESOLVE_PARENTS_CHUNK]
+            rows = await manager.search(raport_id__in=chunk)
+            for row in rows:
+                if row.raport_id:
+                    result[row.raport_id] = row.id
+        return result
 
     async def import_projects(self, items: list[ImportProjectItem]) -> dict[str, int]:
         rows = [
             {
                 "raport_id": i.raport_id,
-                "name": i.name,
-                "project_class": i.project_class,
-                "description": i.description,
+                "name": _trim(i.name, 255) or "",
+                "project_class": _trim(i.project_class, 50) or "Комфорт",
+                "description": _trim(i.description, 1000),
             }
             for i in items
         ]
@@ -735,8 +760,8 @@ class SyncReportService(BaseService):
                 {
                     "raport_id": i.raport_id,
                     "project_id": project_id,
-                    "name": i.name,
-                    "description": i.description,
+                    "name": _trim(i.name, 255) or "",
+                    "description": _trim(i.description, 1000),
                     "planned_end_date": i.planned_end_date,
                 }
             )
@@ -766,9 +791,9 @@ class SyncReportService(BaseService):
                 {
                     "raport_id": i.raport_id,
                     "construction_object_id": co_id,
-                    "name": i.name,
-                    "complex_name": i.complex_name,
-                    "description": i.description,
+                    "name": _trim(i.name, 255) or "",
+                    "complex_name": _trim(i.complex_name, 255) or "",
+                    "description": _trim(i.description, 1000),
                 }
             )
         if rows:
@@ -792,9 +817,9 @@ class SyncReportService(BaseService):
                 {
                     "raport_id": i.raport_id,
                     "housing_id": housing_id,
-                    "name": i.name,
+                    "name": _trim(i.name, 100) or "",
                     "section_number": i.section_number,
-                    "description": i.description,
+                    "description": _trim(i.description, 500),
                 }
             )
         if rows:
@@ -819,8 +844,8 @@ class SyncReportService(BaseService):
                     "raport_id": i.raport_id,
                     "section_id": section_id,
                     "floor_number": i.floor_number,
-                    "name": i.name,
-                    "description": i.description,
+                    "name": _trim(i.name, 100),
+                    "description": _trim(i.description, 500),
                 }
             )
         if rows:
@@ -835,9 +860,9 @@ class SyncReportService(BaseService):
         rows = [
             {
                 "raport_id": i.raport_id,
-                "name": i.name,
-                "code": i.code,
-                "description": i.description,
+                "name": _trim(i.name, 255) or "",
+                "code": _trim(i.code, 50) or i.raport_id[:50],
+                "description": _trim(i.description, 1000),
             }
             for i in items
         ]
@@ -862,10 +887,10 @@ class SyncReportService(BaseService):
                 {
                     "raport_id": i.raport_id,
                     "group_id": group_id,
-                    "name": i.name,
-                    "code": i.code,
-                    "unit": i.unit,
-                    "description": i.description,
+                    "name": _trim(i.name, 255) or "",
+                    "code": _trim(i.code, 100) or i.raport_id[:100],
+                    "unit": _trim(i.unit, 20) or "шт",
+                    "description": _trim(i.description, 1000),
                 }
             )
         if rows:
@@ -873,20 +898,23 @@ class SyncReportService(BaseService):
                 rows,
                 key_field="raport_id",
                 update_fields=["name", "code", "unit", "description", "group_id"],
+                batch_size=self._WORK_TYPE_BATCH_SIZE,
             )
         return {"received": len(items), "upserted": len(rows), "missing_parents": missing}
 
     async def import_contractors(self, items: list[ImportContractorItem]) -> dict[str, int]:
-        rows = [
-            {
-                "raport_id": i.raport_id,
-                "name": i.name,
-                "short_name": (i.short_name or i.name)[:100],
-                "inn": i.inn,
-                "description": i.description,
-            }
-            for i in items
-        ]
+        rows = []
+        for i in items:
+            name = _trim(i.name, 255) or ""
+            rows.append(
+                {
+                    "raport_id": i.raport_id,
+                    "name": name,
+                    "short_name": _trim(i.short_name, 100) or name[:100],
+                    "inn": _trim(i.inn, 20),
+                    "description": _trim(i.description, 1000),
+                }
+            )
         if rows:
             await self.contractor_manager.bulk_upsert(
                 rows,
@@ -905,8 +933,8 @@ class SyncReportService(BaseService):
                 {
                     "raport_id": i.raport_id,
                     "contractor_id": contractor_map.get(i.contractor_raport_id) if i.contractor_raport_id else None,
-                    "name": i.name[:500] if i.name else None,
-                    "subject": i.subject,
+                    "name": _trim(i.name, 500),
+                    "subject": _trim(i.subject, None),
                     "is_warranty_letter": i.is_warranty_letter,
                 }
             )
@@ -922,11 +950,11 @@ class SyncReportService(BaseService):
         rows = [
             {
                 "raport_id": i.raport_id,
-                "last_name": i.last_name,
-                "first_name": i.first_name,
-                "middle_name": i.middle_name,
-                "shown_name": i.shown_name[:500] if i.shown_name else None,
-                "email": i.email,
+                "last_name": _trim(i.last_name, 255),
+                "first_name": _trim(i.first_name, 255),
+                "middle_name": _trim(i.middle_name, 255),
+                "shown_name": _trim(i.shown_name, 500),
+                "email": _trim(i.email, 255),
                 "is_external": i.is_external,
                 "groups": i.groups,
                 "project_ids": i.project_ids,
