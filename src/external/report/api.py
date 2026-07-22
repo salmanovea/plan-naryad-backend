@@ -58,7 +58,10 @@ class ReportApi:
         clean_params = {k: v for k, v in (params or {}).items() if v is not None}
         url = f"{self.base_url}{path}"
 
-        async with httpx.AsyncClient(timeout=self.timeout) as http:
+        async with httpx.AsyncClient(
+            timeout=self.timeout,
+            verify=app_config.keycloak_verify_ssl,
+        ) as http:
             response = await http.request(
                 method,
                 url,
