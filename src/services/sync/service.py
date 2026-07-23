@@ -107,9 +107,17 @@ class SyncReportService(BaseService):
         raport_projects = await self.report.list_all("list_projects")
         if project_raport_id:
             raport_projects = [p for p in raport_projects if str(p["id"]) == project_raport_id]
+        log.info("sync_objects: traversing %d Raport project(s)", len(raport_projects))
 
-        for rp in raport_projects:
+        for proj_idx, rp in enumerate(raport_projects, start=1):
             rp_id = str(rp["id"])
+            log.info(
+                "sync_objects: [%d/%d] project '%s' (raport_id=%s)",
+                proj_idx,
+                len(raport_projects),
+                _trim(rp.get("name"), 255) or "",
+                rp_id,
+            )
 
             project_data = {
                 "raport_id": rp_id,
@@ -181,6 +189,7 @@ class SyncReportService(BaseService):
 
                         await self._sync_sections_floors(h_id, local_h_id, UUID(co_id), counts)
 
+        log.info("sync_objects: done — %s", counts)
         return counts
 
     async def _sync_sections_floors(
@@ -257,60 +266,109 @@ class SyncReportService(BaseService):
 
         Traversal: Raport work-groups → work-types (→ local WorkGroup) → works
         (→ local WorkType).
+
+        Both `work_groups.code` (VARCHAR(50)) and `work_types.code` (VARCHAR(100))
+        are UNIQUE, separately from the `raport_id` upsert key. `code` here just
+        mirrors the Raport id — a UUID (~36 chars), so it fits without truncating
+        — which makes it a *second* unique key that `ON CONFLICT (raport_id)` does
+        not cover. The same Raport WorkType is listed under several Raport
+        WorkGroups (and pagination can repeat items), so rows are accumulated and
+        deduped before a single batched upsert; otherwise the same entity is
+        inserted twice and trips the redundant `..._code_key`.
         """
         counts: dict[str, int] = {"work_groups": 0, "work_types": 0}
 
         raport_work_groups = await self.report.list_all("list_work_groups")
-        for rwg in raport_work_groups:
-            rwg_id = UUID(str(rwg["id"]))
+        log.info("sync_work_catalog: fetched %d Raport work-groups to traverse", len(raport_work_groups))
 
-            # Raport WorkTypes under this Raport WorkGroup → local WorkGroups
+        wg_rows: list[dict] = []
+        for idx, rwg in enumerate(raport_work_groups, start=1):
+            rwg_id = UUID(str(rwg["id"]))
             raport_work_types = await self.report.list_all("list_work_group_work_types", work_group_id=rwg_id)
             for rwt in raport_work_types:
                 rwt_id = str(rwt["id"])
-                wg_data = {
-                    "raport_id": rwt_id,
-                    "name": _trim(rwt.get("name"), 255) or "",
-                    "code": rwt_id[:50],
-                }
-                await self.work_group_manager.bulk_upsert(
-                    [wg_data],
-                    key_field="raport_id",
-                    update_fields=["name", "code"],
+                wg_rows.append(
+                    {
+                        "raport_id": rwt_id,
+                        "name": _trim(rwt.get("name"), 255) or "",
+                        "code": rwt_id[:50],
+                    }
                 )
-                counts["work_groups"] += 1
+            if idx % 25 == 0 or idx == len(raport_work_groups):
+                log.info(
+                    "sync_work_catalog: traversed %d/%d Raport work-groups, %d work-type rows collected",
+                    idx,
+                    len(raport_work_groups),
+                    len(wg_rows),
+                )
 
-                local_wg = await self.work_group_manager.search(raport_id=rwt_id)
-                if not local_wg:
-                    continue
-                local_wg_id = local_wg[0].id
+        wg_rows = self._dedupe_catalog_rows(wg_rows, entity="work_groups")
+        if wg_rows:
+            await self.work_group_manager.bulk_upsert(
+                wg_rows,
+                key_field="raport_id",
+                update_fields=["name", "code"],
+            )
+        counts["work_groups"] = len(wg_rows)
+        log.info("sync_work_catalog: upserted %d local work_groups", counts["work_groups"])
 
-                # Raport Works under this Raport WorkType → local WorkTypes
-                works = await self.report.list_all("list_work_type_works", work_type_id=UUID(rwt_id))
-                wt_rows = []
-                for w in works:
-                    w_id = str(w["id"])
-                    wt_rows.append(
-                        {
-                            "raport_id": w_id,
-                            "group_id": local_wg_id,
-                            "name": _trim(w.get("name"), 255) or "",
-                            "code": w_id[:100],
-                            "unit": self._default_unit(w.get("units")),
-                            "description": None,
-                        }
-                    )
-                wt_rows = _dedupe_by(wt_rows, "raport_id")
-                if wt_rows:
-                    await self.work_type_manager.bulk_upsert(
-                        wt_rows,
-                        key_field="raport_id",
-                        update_fields=["name", "code", "unit", "description", "group_id"],
-                        batch_size=self._WORK_TYPE_BATCH_SIZE,
-                    )
-                    counts["work_types"] += len(wt_rows)
+        wg_map = await self._resolve_parents(self.work_group_manager, (r["raport_id"] for r in wg_rows))
+
+        wt_rows: list[dict] = []
+        processed = 0
+        for rwt_id, local_wg_id in wg_map.items():
+            works = await self.report.list_all("list_work_type_works", work_type_id=UUID(rwt_id))
+            for w in works:
+                w_id = str(w["id"])
+                wt_rows.append(
+                    {
+                        "raport_id": w_id,
+                        "group_id": local_wg_id,
+                        "name": _trim(w.get("name"), 255) or "",
+                        "code": w_id[:100],
+                        "unit": self._default_unit(w.get("units")),
+                        "description": None,
+                    }
+                )
+            processed += 1
+            if processed % 50 == 0 or processed == len(wg_map):
+                log.info(
+                    "sync_work_catalog: fetched works for %d/%d work-groups, %d work rows collected",
+                    processed,
+                    len(wg_map),
+                    len(wt_rows),
+                )
+
+        wt_rows = self._dedupe_catalog_rows(wt_rows, entity="work_types")
+        if wt_rows:
+            await self.work_type_manager.bulk_upsert(
+                wt_rows,
+                key_field="raport_id",
+                update_fields=["name", "code", "unit", "description", "group_id"],
+                batch_size=self._WORK_TYPE_BATCH_SIZE,
+            )
+        counts["work_types"] = len(wt_rows)
+        log.info("sync_work_catalog: upserted %d local work_types", counts["work_types"])
 
         return counts
+
+    @staticmethod
+    def _dedupe_catalog_rows(rows: list[dict], entity: str) -> list[dict]:
+        """Dedupe catalog rows by `raport_id`, then defensively by `code`, before a batched upsert.
+
+        `code` mirrors `raport_id` for synced rows (both hold the Raport UUID), so
+        the second pass is normally a no-op — it only drops a row if `code` ever
+        diverges from `raport_id` (a non-UUID id truncated into VARCHAR(50/100), or
+        a value from the offline import path). Either way it keeps the same entity
+        from hitting the redundant `..._code_key` twice in one statement; a drop is
+        logged so the underlying data issue stays visible.
+        """
+        by_raport_id = _dedupe_by(rows, "raport_id")
+        by_code = _dedupe_by(by_raport_id, "code")
+        dropped = len(by_raport_id) - len(by_code)
+        if dropped:
+            log.warning("sync_work_catalog: dropped %d %s row(s) whose `code` duplicates another row", dropped, entity)
+        return by_code
 
     # ------------------------------------------------------------------
     # Group C — contractors
@@ -663,20 +721,29 @@ class SyncReportService(BaseService):
         selected = set(entities) if entities else set(SyncEntity)
         result: dict[str, dict] = {}
 
+        steps: list[tuple[str, Callable[[], Awaitable[dict[str, int]]]]] = []
         if SyncEntity.USERS in selected:
-            result["users"] = await self.sync_users()
+            steps.append(("users", self.sync_users))
         if SyncEntity.CONTRACTORS in selected:
-            result["contractors"] = await self.sync_contractors()
+            steps.append(("contractors", self.sync_contractors))
         if SyncEntity.CONTRACTS in selected:
-            result["contracts"] = await self.sync_contracts()
+            steps.append(("contracts", self.sync_contracts))
         if selected & self._OBJECTS_ENTITIES:
-            result["objects"] = await self.sync_objects()
+            steps.append(("objects", self.sync_objects))
         if selected & self._CATALOG_ENTITIES:
-            result["work_catalog"] = await self.sync_work_catalog()
+            steps.append(("work_catalog", self.sync_work_catalog))
         if SyncEntity.ASSIGNMENTS in selected:
-            result["assignments"] = await self.sync_assignments()
+            steps.append(("assignments", self.sync_assignments))
         if SyncEntity.TECH_SEQUENCE in selected:
-            result["tech_sequence"] = await self._sync_tech_sequence_all()
+            steps.append(("tech_sequence", self._sync_tech_sequence_all))
+
+        total = len(steps)
+        log.info("sync: starting — %d group(s) to sync: %s", total, ", ".join(key for key, _ in steps))
+        for idx, (key, handler) in enumerate(steps, start=1):
+            log.info("sync: [%d/%d] syncing '%s'...", idx, total, key)
+            result[key] = await handler()
+            log.info("sync: [%d/%d] '%s' done — %s", idx, total, key, result[key])
+        log.info("sync: finished all %d group(s)", total)
 
         return result
 
@@ -685,15 +752,26 @@ class SyncReportService(BaseService):
         Raport id. Heavy (per-housing plan fetch) — prefer the scoped
         `sync_tech_sequence(housing_raport_id)` for routine use."""
         housings = await self.housing_manager.search(raport_id__isnotnull=True)
+        candidates = [h for h in housings if h.raport_id]
+        log.info("tech_sequence: syncing sequence for %d housing(s) with a Raport id", len(candidates))
         totals = {"tech_sequence": 0, "deleted": 0, "skipped": 0, "housings": 0}
-        for h in housings:
-            if not h.raport_id:
+        for idx, h in enumerate(candidates, start=1):
+            raport_id = h.raport_id
+            if not raport_id:
                 continue
-            res = await self.sync_tech_sequence(h.raport_id)
+            res = await self.sync_tech_sequence(raport_id)
             totals["tech_sequence"] += res["tech_sequence"]
             totals["deleted"] += res["deleted"]
             totals["skipped"] += res["skipped"]
             totals["housings"] += 1
+            if idx % 10 == 0 or idx == len(candidates):
+                log.info(
+                    "tech_sequence: processed %d/%d housings (%d sequence rows, %d deleted so far)",
+                    idx,
+                    len(candidates),
+                    totals["tech_sequence"],
+                    totals["deleted"],
+                )
         return totals
 
     async def import_entities(self, payload: SyncImportRequest) -> dict[str, dict]:
