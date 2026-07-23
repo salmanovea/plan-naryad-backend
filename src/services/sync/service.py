@@ -307,7 +307,7 @@ class SyncReportService(BaseService):
             await self.work_group_manager.bulk_upsert(
                 wg_rows,
                 key_field="raport_id",
-                update_fields=["name", "code"],
+                update_fields=["name"],
             )
         counts["work_groups"] = len(wg_rows)
         log.info("sync_work_catalog: upserted %d local work_groups", counts["work_groups"])
@@ -344,7 +344,7 @@ class SyncReportService(BaseService):
             await self.work_type_manager.bulk_upsert(
                 wt_rows,
                 key_field="raport_id",
-                update_fields=["name", "code", "unit", "description", "group_id"],
+                update_fields=["name", "unit", "description", "group_id"],
                 batch_size=self._WORK_TYPE_BATCH_SIZE,
             )
         counts["work_types"] = len(wt_rows)
