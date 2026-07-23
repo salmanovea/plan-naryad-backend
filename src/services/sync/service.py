@@ -267,14 +267,14 @@ class SyncReportService(BaseService):
         Traversal: Raport work-groups → work-types (→ local WorkGroup) → works
         (→ local WorkType).
 
-        Both `work_groups.code` (VARCHAR(50)) and `work_types.code` (VARCHAR(100))
-        are UNIQUE, separately from the `raport_id` upsert key. `code` here just
-        mirrors the Raport id — a UUID (~36 chars), so it fits without truncating
-        — which makes it a *second* unique key that `ON CONFLICT (raport_id)` does
-        not cover. The same Raport WorkType is listed under several Raport
-        WorkGroups (and pagination can repeat items), so rows are accumulated and
-        deduped before a single batched upsert; otherwise the same entity is
-        inserted twice and trips the redundant `..._code_key`.
+        The same Raport WorkType is listed under several Raport WorkGroups (and
+        pagination can repeat items). Rows are accumulated across the whole
+        traversal and deduped by `raport_id` up front, before the full list is
+        handed to `bulk_upsert`, which writes it in batches. Deduping the whole
+        list (rather than each batch) guarantees no single `ON CONFLICT
+        (raport_id)` statement contains the same `raport_id` twice. `code` mirrors
+        `raport_id` (both hold the Raport UUID, which fits without truncation), so
+        deduping by `raport_id` also makes `code` unique — no separate pass needed.
         """
         counts: dict[str, int] = {"work_groups": 0, "work_types": 0}
 
@@ -302,7 +302,7 @@ class SyncReportService(BaseService):
                     len(wg_rows),
                 )
 
-        wg_rows = self._dedupe_catalog_rows(wg_rows, entity="work_groups")
+        wg_rows = _dedupe_by(wg_rows, "raport_id")
         if wg_rows:
             await self.work_group_manager.bulk_upsert(
                 wg_rows,
@@ -339,7 +339,7 @@ class SyncReportService(BaseService):
                     len(wt_rows),
                 )
 
-        wt_rows = self._dedupe_catalog_rows(wt_rows, entity="work_types")
+        wt_rows = _dedupe_by(wt_rows, "raport_id")
         if wt_rows:
             await self.work_type_manager.bulk_upsert(
                 wt_rows,
@@ -351,24 +351,6 @@ class SyncReportService(BaseService):
         log.info("sync_work_catalog: upserted %d local work_types", counts["work_types"])
 
         return counts
-
-    @staticmethod
-    def _dedupe_catalog_rows(rows: list[dict], entity: str) -> list[dict]:
-        """Dedupe catalog rows by `raport_id`, then defensively by `code`, before a batched upsert.
-
-        `code` mirrors `raport_id` for synced rows (both hold the Raport UUID), so
-        the second pass is normally a no-op — it only drops a row if `code` ever
-        diverges from `raport_id` (a non-UUID id truncated into VARCHAR(50/100), or
-        a value from the offline import path). Either way it keeps the same entity
-        from hitting the redundant `..._code_key` twice in one statement; a drop is
-        logged so the underlying data issue stays visible.
-        """
-        by_raport_id = _dedupe_by(rows, "raport_id")
-        by_code = _dedupe_by(by_raport_id, "code")
-        dropped = len(by_raport_id) - len(by_code)
-        if dropped:
-            log.warning("sync_work_catalog: dropped %d %s row(s) whose `code` duplicates another row", dropped, entity)
-        return by_code
 
     # ------------------------------------------------------------------
     # Group C — contractors
