@@ -282,7 +282,6 @@ class ReportApi:
         """
         return await self._request("GET", "/api/v1/contractor-works", params=params)
 
-
     async def check_calendar_plan(self, **params: Any) -> Any:
         return await self._request("GET", "/api/v1/calendar-plans/check", params=params)
 
