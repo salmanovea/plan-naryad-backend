@@ -1,7 +1,8 @@
 from fastapi import FastAPI
 from sqladmin import Admin
 
-from src.config.admin.model_admin.contractor import ContractAdmin, ContractorAdmin, ContractorAssignmentAdmin
+from src.config.admin.auth import build_admin_auth
+from src.config.admin.model_admin.contractor import ContractAdmin, ContractorAdmin
 from src.config.admin.model_admin.housing import FloorAdmin, HousingAdmin, SectionAdmin
 from src.config.admin.model_admin.project_structure import (
     ConstructionObjectAdmin,
@@ -20,7 +21,8 @@ def init_admin(app: FastAPI) -> Admin:
         app=app,
         engine=async_engine,
         title="Plan-naryad Admin",
-        base_url=f"/pn/admin",
+        base_url="/pn/admin",
+        authentication_backend=build_admin_auth(),
     )
 
     # Project structure
