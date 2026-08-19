@@ -2,129 +2,107 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.dbo.tables.workforce import (
     ArticleBDR,
-    WfArticleMapping,
-    WfBudgetItem,
-    WfBudgetPeriod,
-    WfChallenge,
-    WfChallengeItem,
-    WfContractorAssignment,
-    WfHeadcountFact,
-    WfHeadcountPlan,
-    WfMobilizationCheckpoint,
-    WfMobilizationPlan,
-    WfProject,
-    WfProjectObject,
-    WfViolation,
-    WfWorkforceNorm,
+    ArticleBDRWork,
+    BudgetItem,
+    BudgetPeriod,
+    Challenge,
+    ChallengeItem,
+    ContractorAssignment,
+    HeadcountFact,
+    HeadcountNorm,
+    HeadcountPlan,
+    MobilizationCheckpoint,
+    MobilizationPlan,
+    Violation,
 )
 from src.models.managers.common import BaseManager
 
 
-class WfProjectManager(BaseManager[WfProject]):
-    """Data access for WfProject entities."""
+class HeadcountNormManager(BaseManager[HeadcountNorm]):
+    """Data access for HeadcountNorm entities."""
 
-    entity = WfProject
-    text_search_fields = {"name": "ilike"}
-
-    def __init__(self, db: AsyncSession):
-        super().__init__(db)
-
-
-class WfProjectObjectManager(BaseManager[WfProjectObject]):
-    """Data access for WfProjectObject entities."""
-
-    entity = WfProjectObject
-    text_search_fields = {"name": "ilike"}
+    entity = HeadcountNorm
 
     def __init__(self, db: AsyncSession):
         super().__init__(db)
 
 
-class WfWorkforceNormManager(BaseManager[WfWorkforceNorm]):
-    """Data access for WfWorkforceNorm entities."""
+class BudgetPeriodManager(BaseManager[BudgetPeriod]):
+    """Data access for BudgetPeriod entities."""
 
-    entity = WfWorkforceNorm
-
-    def __init__(self, db: AsyncSession):
-        super().__init__(db)
-
-
-class WfBudgetPeriodManager(BaseManager[WfBudgetPeriod]):
-    """Data access for WfBudgetPeriod entities."""
-
-    entity = WfBudgetPeriod
+    entity = BudgetPeriod
 
     def __init__(self, db: AsyncSession):
         super().__init__(db)
 
 
-class WfBudgetItemManager(BaseManager[WfBudgetItem]):
-    """Data access for WfBudgetItem entities."""
+class BudgetItemManager(BaseManager[BudgetItem]):
+    """Data access for BudgetItem entities."""
 
-    entity = WfBudgetItem
-
-    def __init__(self, db: AsyncSession):
-        super().__init__(db)
-
-
-class WfHeadcountFactManager(BaseManager[WfHeadcountFact]):
-    """Data access for WfHeadcountFact entities."""
-
-    entity = WfHeadcountFact
+    entity = BudgetItem
 
     def __init__(self, db: AsyncSession):
         super().__init__(db)
 
 
-class WfHeadcountPlanManager(BaseManager[WfHeadcountPlan]):
-    """Data access for WfHeadcountPlan entities."""
+class HeadcountFactManager(BaseManager[HeadcountFact]):
+    """Data access for HeadcountFact entities."""
 
-    entity = WfHeadcountPlan
-
-    def __init__(self, db: AsyncSession):
-        super().__init__(db)
-
-
-class WfContractorAssignmentManager(BaseManager[WfContractorAssignment]):
-    """Data access for WfContractorAssignment entities."""
-
-    entity = WfContractorAssignment
+    entity = HeadcountFact
 
     def __init__(self, db: AsyncSession):
         super().__init__(db)
 
 
-class WfChallengeManager(BaseManager[WfChallenge]):
-    """Data access for WfChallenge entities."""
+class HeadcountPlanManager(BaseManager[HeadcountPlan]):
+    """Data access for HeadcountPlan entities."""
 
-    entity = WfChallenge
-
-    def __init__(self, db: AsyncSession):
-        super().__init__(db)
-
-
-class WfChallengeItemManager(BaseManager[WfChallengeItem]):
-    """Data access for WfChallengeItem entities."""
-
-    entity = WfChallengeItem
+    entity = HeadcountPlan
 
     def __init__(self, db: AsyncSession):
         super().__init__(db)
 
 
-class WfMobilizationPlanManager(BaseManager[WfMobilizationPlan]):
-    """Data access for WfMobilizationPlan entities."""
+class ContractorAssignmentManager(BaseManager[ContractorAssignment]):
+    """Data access for workforce ContractorAssignment entities (object × work)."""
 
-    entity = WfMobilizationPlan
+    entity = ContractorAssignment
 
     def __init__(self, db: AsyncSession):
         super().__init__(db)
 
 
-class WfMobilizationCheckpointManager(BaseManager[WfMobilizationCheckpoint]):
-    """Data access for WfMobilizationCheckpoint entities."""
+class ChallengeManager(BaseManager[Challenge]):
+    """Data access for Challenge entities."""
 
-    entity = WfMobilizationCheckpoint
+    entity = Challenge
+
+    def __init__(self, db: AsyncSession):
+        super().__init__(db)
+
+
+class ChallengeItemManager(BaseManager[ChallengeItem]):
+    """Data access for ChallengeItem entities."""
+
+    entity = ChallengeItem
+
+    def __init__(self, db: AsyncSession):
+        super().__init__(db)
+
+
+class MobilizationPlanManager(BaseManager[MobilizationPlan]):
+    """Data access for MobilizationPlan entities."""
+
+    entity = MobilizationPlan
+
+    def __init__(self, db: AsyncSession):
+        super().__init__(db)
+
+
+class MobilizationCheckpointManager(BaseManager[MobilizationCheckpoint]):
+    """Data access for MobilizationCheckpoint entities."""
+
+    entity = MobilizationCheckpoint
 
     def __init__(self, db: AsyncSession):
         super().__init__(db)
@@ -140,19 +118,19 @@ class ArticleBDRManager(BaseManager[ArticleBDR]):
         super().__init__(db)
 
 
-class WfArticleMappingManager(BaseManager[WfArticleMapping]):
-    """Data access for WfArticleMapping entities (article ↔ work type links)."""
+class ArticleBDRWorkManager(BaseManager[ArticleBDRWork]):
+    """Data access for ArticleBDRWork entities (article ↔ work links)."""
 
-    entity = WfArticleMapping
+    entity = ArticleBDRWork
 
     def __init__(self, db: AsyncSession):
         super().__init__(db)
 
 
-class WfViolationManager(BaseManager[WfViolation]):
-    """Data access for WfViolation entities."""
+class ViolationManager(BaseManager[Violation]):
+    """Data access for Violation entities."""
 
-    entity = WfViolation
+    entity = Violation
 
     def __init__(self, db: AsyncSession):
         super().__init__(db)

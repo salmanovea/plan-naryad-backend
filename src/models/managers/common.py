@@ -453,7 +453,7 @@ class BaseManager(Generic[T]):
 
     async def bulk_update_by_batch(
         self,
-        entities_to_update: list[dict[str, Union[int, UUID, str]]],
+        entities_to_update: list[dict[str, Any]],
         batch: int = 32000,
     ) -> None:
         """Bulk-update a list of entities in batches of `batch` rows."""
@@ -471,7 +471,7 @@ class BaseManager(Generic[T]):
 
     async def bulk_update(
         self,
-        entities_to_update: list[dict[str, Union[int, UUID, str]]],
+        entities_to_update: list[dict[str, Any]],
         is_commit: bool = True,
     ):
         """

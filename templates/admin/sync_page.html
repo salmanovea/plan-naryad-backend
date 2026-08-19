@@ -211,6 +211,34 @@
             </div>
         </div>
 
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">
+                        <i class="fa-solid fa-clipboard-check me-2"></i>Факты работ
+                    </h3>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted">
+                        Забирает факты корпуса из Рапорта. Без даты берётся окно «вчера и сегодня»
+                        — как в ночной джобе. Требуется raport_id корпуса.
+                    </p>
+                    <form action="/pn/admin/sync/action/work-facts" method="POST" id="form-work-facts">
+                        <div class="mb-2">
+                            <label class="form-label">housing_raport_id <span class="text-danger">*</span></label>
+                            <input type="text" name="housing_raport_id" class="form-control" required
+                                   placeholder="uuid корпуса из Рапорта">
+                        </div>
+                    </form>
+                </div>
+                <div class="card-footer">
+                    <button type="submit" form="form-work-facts" class="btn btn-primary w-100">
+                        <i class="fa-solid fa-rotate me-1"></i>Запустить
+                    </button>
+                </div>
+            </div>
+        </div>
+
     </div>
 </div>
 {% endblock %}
