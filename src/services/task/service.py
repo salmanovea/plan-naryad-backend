@@ -76,9 +76,7 @@ class TaskService(BaseService):
             entry: dict = {"housing_id": str(local_id), "facts": 0, "positions": 0, "errors": []}
 
             try:
-                facts = await SyncReportService(self.db).sync_work_facts(
-                    raport_id, date_from=yesterday, date_to=target
-                )
+                facts = await SyncReportService(self.db).sync_work_facts(raport_id, date_from=yesterday, date_to=target)
                 entry["facts"] = facts.get("work_facts", 0)
                 totals["facts"] += entry["facts"]
             except Exception as err:

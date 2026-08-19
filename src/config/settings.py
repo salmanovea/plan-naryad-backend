@@ -46,10 +46,9 @@ class AppConfig(BaseSettings):
     # Only the switch is duplicated here, to keep the admin UI and CORS in step with it.
     auth_enabled: bool = False
 
-    # SQLAdmin sign-in. The admin UI cannot carry a Bearer token, so it has its own credentials;
-    # with no password set the UI refuses to start while auth is enabled.
-    admin_username: str = "admin"
-    admin_password: Optional[str] = None
+    admin_keycloak_client_id: Optional[str] = None
+    admin_allowed_groups: str = "superuser"
+    admin_session_ttl: int = 3600
     admin_session_secret: Optional[str] = None
 
     # Redis — shared cache for authorization answers.
@@ -70,6 +69,10 @@ class AppConfig(BaseSettings):
     # pair above when unset.
     report_service_client_id: Optional[str] = None
     report_service_client_secret: Optional[str] = None
+
+    @property
+    def admin_groups(self) -> set[str]:
+        return {group.strip() for group in self.admin_allowed_groups.split(",") if group.strip()}
 
     @property
     def cors_origins(self) -> list[str]:

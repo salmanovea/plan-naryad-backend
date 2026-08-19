@@ -1,7 +1,9 @@
 from fastapi import FastAPI
 from sqladmin import Admin
 
-from src.config.admin.auth import build_admin_auth
+from starlette.routing import Route
+
+from src.config.admin.auth import CALLBACK_PATH, build_admin_auth
 from src.config.admin.model_admin.contractor import ContractAdmin, ContractorAdmin
 from src.config.admin.model_admin.housing import FloorAdmin, HousingAdmin, SectionAdmin
 from src.config.admin.model_admin.project_structure import (
@@ -16,14 +18,22 @@ from src.config.admin.model_admin.workforce import ArticleBDRAdmin, ArticleBDRWo
 from src.config.postgres.db_config import async_engine
 
 
+ADMIN_BASE_URL = "/pn/admin"
+
+
 def init_admin(app: FastAPI) -> Admin:
+    auth_backend = build_admin_auth(ADMIN_BASE_URL)
     admin = Admin(
         app=app,
         engine=async_engine,
         title="Plan-naryad Admin",
-        base_url="/pn/admin",
-        authentication_backend=build_admin_auth(),
+        base_url=ADMIN_BASE_URL,
+        authentication_backend=auth_backend,
     )
+
+    if auth_backend is not None:
+        admin.admin.router.routes.insert(0, Route(CALLBACK_PATH, endpoint=auth_backend.callback, name="oauth_callback"))
+        admin.admin.router.routes.insert(0, Route("/login", endpoint=auth_backend.authorize_redirect, name="sso_login"))
 
     # Project structure
     admin.add_view(ProjectAdmin)
