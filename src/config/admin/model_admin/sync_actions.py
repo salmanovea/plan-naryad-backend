@@ -1,4 +1,5 @@
 from fastapi import Request
+from starlette.datastructures import UploadFile
 from sqladmin import BaseView, expose
 from starlette.responses import HTMLResponse, RedirectResponse
 
@@ -27,6 +28,11 @@ async def _run(request: Request, label: str, action):
     return _redirect_back(request)
 
 
+def _form_str(value: UploadFile | str | None) -> str:
+    """Form fields arrive as `UploadFile | str`; only text is meaningful here."""
+    return value.strip() if isinstance(value, str) else ""
+
+
 class SyncActionsAdmin(BaseView):
     category = CATEGORY_SYNC
     name = "Синхронизация с Рапортом"
@@ -44,7 +50,7 @@ class SyncActionsAdmin(BaseView):
     @expose(path="/sync/action/objects", methods=["POST"])
     async def sync_objects(self, request: Request):
         form = await request.form()
-        project_raport_id = (form.get("project_raport_id") or "").strip() or None
+        project_raport_id = _form_str(form.get("project_raport_id")) or None
         return await _run(request, "objects", lambda s: s.sync_objects(project_raport_id=project_raport_id))
 
     @expose(path="/sync/action/work-catalog", methods=["POST"])
@@ -63,20 +69,22 @@ class SyncActionsAdmin(BaseView):
     async def sync_users(self, request: Request):
         return await _run(request, "users", lambda s: s.sync_users())
 
-    @expose(path="/sync/action/assignments", methods=["POST"])
-    async def sync_assignments(self, request: Request):
+    @expose(path="/sync/action/work-facts", methods=["POST"])
+    async def sync_work_facts(self, request: Request):
         form = await request.form()
-        housing_raport_id = (form.get("housing_raport_id") or "").strip() or None
+        housing_raport_id = _form_str(form.get("housing_raport_id"))
+        if not housing_raport_id:
+            return HTMLResponse("housing_raport_id обязателен для синхронизации фактов", status_code=400)
         return await _run(
             request,
-            "assignments",
-            lambda s: s.sync_assignments(housing_raport_id=housing_raport_id),
+            "work-facts",
+            lambda s: s.sync_work_facts(housing_raport_id),
         )
 
     @expose(path="/sync/action/tech-sequence", methods=["POST"])
     async def sync_tech_sequence(self, request: Request):
         form = await request.form()
-        housing_raport_id = (form.get("housing_raport_id") or "").strip()
+        housing_raport_id = _form_str(form.get("housing_raport_id"))
         if not housing_raport_id:
             return HTMLResponse("housing_raport_id обязателен для тех. последовательности", status_code=400)
         return await _run(

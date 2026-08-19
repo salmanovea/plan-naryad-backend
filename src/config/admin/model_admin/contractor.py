@@ -1,7 +1,7 @@
 from src.config.admin.categories import CATEGORY_CONTRACTORS
 from src.config.admin.model_admin.base_admin import BaseAdmin
 from src.models.dbo.tables.contract import Contract
-from src.models.dbo.tables.contractor import Contractor, ContractorAssignment
+from src.models.dbo.tables.contractor import Contractor
 
 
 class ContractorAdmin(BaseAdmin, model=Contractor):  # type: ignore[call-arg]
@@ -47,39 +47,6 @@ class ContractorAdmin(BaseAdmin, model=Contractor):  # type: ignore[call-arg]
         Contractor.raport_id,
     ]
     column_sortable_list = [Contractor.name, Contractor.short_name]
-
-
-class ContractorAssignmentAdmin(BaseAdmin, model=ContractorAssignment):  # type: ignore[call-arg]
-    category = CATEGORY_CONTRACTORS
-    name = "Назначение подрядчика"
-    name_plural = "Назначения подрядчиков"
-    icon = "fa-solid fa-link"
-
-    column_list = [
-        ContractorAssignment.id,
-        ContractorAssignment.contractor,
-        ContractorAssignment.housing,
-        ContractorAssignment.section,
-        ContractorAssignment.work_group,
-        ContractorAssignment.source,
-    ]
-    column_details_list = [
-        ContractorAssignment.id,
-        ContractorAssignment.contractor,
-        ContractorAssignment.housing,
-        ContractorAssignment.section,
-        ContractorAssignment.work_group,
-        ContractorAssignment.work_type_ids,
-        ContractorAssignment.source,
-    ]
-    form_columns = [
-        ContractorAssignment.contractor,
-        ContractorAssignment.housing,
-        ContractorAssignment.section,
-        ContractorAssignment.work_group,
-        ContractorAssignment.work_type_ids,
-    ]
-    column_sortable_list = []
 
 
 class ContractAdmin(BaseAdmin, model=Contract):  # type: ignore[call-arg]

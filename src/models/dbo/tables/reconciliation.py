@@ -13,7 +13,7 @@ from src.models.dbo.base_model import Base
 if TYPE_CHECKING:
     from src.models.dbo.tables.contractor import Contractor
     from src.models.dbo.tables.housing import Housing, Section, Floor
-    from src.models.dbo.tables.work import WorkType
+    from src.models.dbo.tables.work import Work
     from src.models.dbo.tables.plan import PlanItem
     from src.models.dbo.tables.fact import WorkFact
 
@@ -55,20 +55,26 @@ class ReconciliationResult(IDMixin, Base):
         nullable=False,
         index=True,
     )
-    work_type_id: Mapped[UUID] = mapped_column(
-        ForeignKey("work_types.id", name="fk_reconciliation_results_work_type_id"),
+    work_id: Mapped[UUID] = mapped_column(
+        ForeignKey("works.id", name="fk_reconciliation_results_work_id"),
         nullable=False,
         index=True,
     )
-    contractor_id: Mapped[UUID] = mapped_column(
+    # Nullable for the same reason as on the fact: Raport does not attribute every fact to a
+    # contractor, and «факт без плана» rows must still reach the reconciliation table.
+    contractor_id: Mapped[Optional[UUID]] = mapped_column(
         ForeignKey("contractors.id", name="fk_reconciliation_results_contractor_id"),
-        nullable=False,
         index=True,
     )
 
     planned_volume: Mapped[Decimal] = mapped_column(Numeric(12, 4), default=0)
     actual_volume: Mapped[Decimal] = mapped_column(Numeric(12, 4), default=0)
     completion_ratio: Mapped[Decimal] = mapped_column(Numeric(8, 4), default=0)
+
+    # «% Исходный» — snapshot taken when the plan was generated, copied from
+    # PlanItem.source_percent. «% Факт» — the cell percent at reconciliation time.
+    source_percent: Mapped[Optional[Decimal]] = mapped_column(Numeric(6, 2))
+    fact_percent: Mapped[Optional[Decimal]] = mapped_column(Numeric(6, 2))
 
     status: Mapped[str] = mapped_column(String(20), nullable=False)
     pattern: Mapped[Optional[str]] = mapped_column(String(30))
@@ -90,8 +96,8 @@ class ReconciliationResult(IDMixin, Base):
     housing: Mapped["Housing"] = relationship()  # type: ignore[name-defined]
     section: Mapped["Section"] = relationship()  # type: ignore[name-defined]
     floor: Mapped["Floor"] = relationship()  # type: ignore[name-defined]
-    work_type: Mapped["WorkType"] = relationship()  # type: ignore[name-defined]
-    contractor: Mapped["Contractor"] = relationship()  # type: ignore[name-defined]
+    work: Mapped["Work"] = relationship()  # type: ignore[name-defined]
+    contractor: Mapped[Optional["Contractor"]] = relationship()  # type: ignore[name-defined]
     plan_item: Mapped[Optional["PlanItem"]] = relationship()  # type: ignore[name-defined]
     work_fact: Mapped[Optional["WorkFact"]] = relationship()  # type: ignore[name-defined]
 

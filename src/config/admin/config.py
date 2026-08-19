@@ -3,17 +3,16 @@ from sqladmin import Admin
 
 from src.config.admin.model_admin.contractor import ContractAdmin, ContractorAdmin, ContractorAssignmentAdmin
 from src.config.admin.model_admin.housing import FloorAdmin, HousingAdmin, SectionAdmin
+from src.config.admin.model_admin.project_structure import (
+    ConstructionObjectAdmin,
+    ProjectAdmin,
+    QueueAdmin,
+)
 from src.config.admin.model_admin.sync_actions import SyncActionsAdmin
 from src.config.admin.model_admin.user import UserAdmin
-from src.config.admin.model_admin.work import WorkGroupAdmin, WorkTypeAdmin
-from src.config.admin.model_admin.workforce import (
-    ArticleBDRAdmin,
-    WfArticleMappingAdmin,
-    WfProjectAdmin,
-    WfProjectObjectAdmin,
-)
+from src.config.admin.model_admin.work import WorkAdmin, WorkGroupAdmin, WorkSetAdmin, WorkTypeAdmin
+from src.config.admin.model_admin.workforce import ArticleBDRAdmin, ArticleBDRWorkAdmin
 from src.config.postgres.db_config import async_engine
-from src.config.settings import app_config
 
 
 def init_admin(app: FastAPI) -> Admin:
@@ -25,24 +24,26 @@ def init_admin(app: FastAPI) -> Admin:
     )
 
     # Project structure
-    admin.add_view(WfProjectAdmin)
-    admin.add_view(WfProjectObjectAdmin)
+    admin.add_view(ProjectAdmin)
+    admin.add_view(QueueAdmin)
+    admin.add_view(ConstructionObjectAdmin)
     admin.add_view(HousingAdmin)
     admin.add_view(SectionAdmin)
     admin.add_view(FloorAdmin)
 
     # Work catalog
+    admin.add_view(WorkSetAdmin)
     admin.add_view(WorkGroupAdmin)
     admin.add_view(WorkTypeAdmin)
+    admin.add_view(WorkAdmin)
 
     # Contractors
     admin.add_view(ContractorAdmin)
-    admin.add_view(ContractorAssignmentAdmin)
     admin.add_view(ContractAdmin)
 
     # Workforce
     admin.add_view(ArticleBDRAdmin)
-    admin.add_view(WfArticleMappingAdmin)
+    admin.add_view(ArticleBDRWorkAdmin)
 
     # System
     admin.add_view(UserAdmin)

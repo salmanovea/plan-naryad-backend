@@ -4,7 +4,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Optional
 from uuid import UUID
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Numeric, String, Text, func
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Numeric, String, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.dbo.mixins import IDMixin
@@ -13,18 +13,23 @@ from src.models.dbo.base_model import Base
 if TYPE_CHECKING:
     from src.models.dbo.tables.contractor import Contractor
     from src.models.dbo.tables.housing import Housing, Section, Floor
-    from src.models.dbo.tables.work import WorkType
+    from src.models.dbo.tables.work import Work
 
 
 class PlanSource(str, Enum):
+    """How a plan item came to be. `ADJUSTED` is retired — editing is delete + re-add."""
+
     AUTO = "auto"
     MANUAL = "manual"
     ADJUSTED = "adjusted"
 
 
 class PlanStatus(str, Enum):
+    """`CANCELLED` is retired — items are deleted outright."""
+
     DRAFT = "draft"
     CONFIRMED = "confirmed"
+    TRANSFERRED = "transferred"
     CANCELLED = "cancelled_by_rs"
 
 
@@ -49,8 +54,8 @@ class PlanItem(IDMixin, Base):
         nullable=False,
         index=True,
     )
-    work_type_id: Mapped[UUID] = mapped_column(
-        ForeignKey("work_types.id", name="fk_plan_items_work_type_id"),
+    work_id: Mapped[UUID] = mapped_column(
+        ForeignKey("works.id", name="fk_plan_items_work_id"),
         nullable=False,
         index=True,
     )
@@ -60,8 +65,19 @@ class PlanItem(IDMixin, Base):
         index=True,
     )
 
-    planned_volume: Mapped[Decimal] = mapped_column(Numeric(12, 4), nullable=False)
-    unit: Mapped[str] = mapped_column(String(20), nullable=False)
+    # Percent of the cell held by this contractor at the moment the plan was generated —
+    # the «% Исходный» column in reconciliation. Read from work_cell_contractor.percent.
+    source_percent: Mapped[Optional[Decimal]] = mapped_column(Numeric(6, 2))
+
+    # Raport identifiers. `work_cell_contractor_id` is the grain of execution (Р0) and the
+    # key Raport uses to light up cells in the «Задание на день» view.
+    work_cell_contractor_id: Mapped[Optional[UUID]] = mapped_column(Uuid(as_uuid=True), index=True)
+    work_cell_id: Mapped[Optional[UUID]] = mapped_column(Uuid(as_uuid=True), index=True)
+
+    # Volumes are on their way out — no one sets a daily norm any more. Nullable now,
+    # dropped once the frontend stops reading them.
+    planned_volume: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 4))
+    unit: Mapped[Optional[str]] = mapped_column(String(20))
 
     rs_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
     rs_confirmed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
@@ -73,30 +89,5 @@ class PlanItem(IDMixin, Base):
     housing: Mapped["Housing"] = relationship()  # type: ignore[name-defined]
     section: Mapped["Section"] = relationship()  # type: ignore[name-defined]
     floor: Mapped["Floor"] = relationship()  # type: ignore[name-defined]
-    work_type: Mapped["WorkType"] = relationship()  # type: ignore[name-defined]
+    work: Mapped["Work"] = relationship()  # type: ignore[name-defined]
     contractor: Mapped["Contractor"] = relationship()  # type: ignore[name-defined]
-    adjustments: Mapped[list["PlanAdjustment"]] = relationship(
-        back_populates="plan_item",
-        cascade="all, delete-orphan",
-    )
-
-
-class PlanAdjustment(IDMixin, Base):
-    """Audit log of plan-naryad modifications made by RS."""
-
-    __tablename__ = "plan_adjustments"
-
-    plan_item_id: Mapped[UUID] = mapped_column(
-        ForeignKey("plan_items.id", name="fk_plan_adjustments_plan_item_id"),
-        nullable=False,
-        index=True,
-    )
-    original_field: Mapped[str] = mapped_column(String(50), nullable=False)
-    original_value: Mapped[str] = mapped_column(String(255), nullable=False)
-    new_value: Mapped[str] = mapped_column(String(255), nullable=False)
-    reason: Mapped[str] = mapped_column(Text, nullable=False)
-
-    adjusted_by: Mapped[str] = mapped_column(String(255), nullable=False)
-    adjusted_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
-
-    plan_item: Mapped["PlanItem"] = relationship(back_populates="adjustments")
