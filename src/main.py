@@ -13,6 +13,8 @@ from src.api.v1.housing.views import housing_router
 from src.api.v1.plan.views import plan_router
 from src.api.v1.reconciliation.views import reconciliation_router
 from src.api.v1.sync.views import sync_router
+from src.api.v1.task.views import task_router
+from src.api.v1.user.views import user_router
 from src.api.v1.work.views import work_router
 from src.api.v1.workforce.views import workforce_router
 from src.config.admin.config import init_admin
@@ -79,6 +81,8 @@ app.include_router(alert_router, prefix=_PREFIX)
 app.include_router(dashboard_router, prefix=_PREFIX)
 app.include_router(workforce_router, prefix=_PREFIX)
 app.include_router(sync_router, prefix=_PREFIX)
+app.include_router(task_router, prefix=_PREFIX)
+app.include_router(user_router, prefix=_PREFIX)
 
 init_admin(app)
 

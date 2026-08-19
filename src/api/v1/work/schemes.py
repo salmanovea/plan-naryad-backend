@@ -5,11 +5,35 @@ from uuid import UUID
 from fastapi import Query
 from pydantic import BaseModel, ConfigDict
 
-from src.api.schemes import IDMixinSchema, WorkGroupBaseFilters
-from src.models.dbo.tables.work import DependencyType
+from src.api.schemes import IDMixinSchema, WorkGroupBaseFilters, WorkSetBaseFilters, WorkTypeBaseFilters
+from src.models.dbo.tables.work import FloorSortingDirection, PlanningType
+
+
+class CreateWorkSetRequest(BaseModel):
+    name: str
+    code: str
+    description: Optional[str] = None
+    order: int = 0
+
+
+class UpdateWorkSetRequest(BaseModel):
+    name: Optional[str] = None
+    code: Optional[str] = None
+    description: Optional[str] = None
+    order: Optional[int] = None
+
+
+class WorkSetSchema(IDMixinSchema):
+    model_config = ConfigDict(from_attributes=True)
+
+    name: str
+    code: str
+    description: Optional[str] = None
+    order: int
 
 
 class CreateWorkGroupRequest(BaseModel):
+    work_set_id: Optional[UUID] = None
     name: str
     code: str
     description: Optional[str] = None
@@ -17,6 +41,7 @@ class CreateWorkGroupRequest(BaseModel):
 
 
 class UpdateWorkGroupRequest(BaseModel):
+    work_set_id: Optional[UUID] = None
     name: Optional[str] = None
     code: Optional[str] = None
     description: Optional[str] = None
@@ -26,6 +51,7 @@ class UpdateWorkGroupRequest(BaseModel):
 class WorkGroupSchema(IDMixinSchema):
     model_config = ConfigDict(from_attributes=True)
 
+    work_set_id: Optional[UUID] = None
     name: str
     code: str
     description: Optional[str] = None
@@ -33,25 +59,51 @@ class WorkGroupSchema(IDMixinSchema):
 
 
 class CreateWorkTypeRequest(BaseModel):
-    group_id: UUID
+    work_group_id: Optional[UUID] = None
+    name: str
+    code: str
+    description: Optional[str] = None
+    order: int = 0
+
+
+class UpdateWorkTypeRequest(BaseModel):
+    work_group_id: Optional[UUID] = None
+    name: Optional[str] = None
+    code: Optional[str] = None
+    description: Optional[str] = None
+    order: Optional[int] = None
+
+
+class WorkTypeSchema(IDMixinSchema):
+    model_config = ConfigDict(from_attributes=True)
+
+    work_group_id: Optional[UUID] = None
+    name: str
+    code: str
+    description: Optional[str] = None
+    order: int
+
+
+class CreateWorkRequest(BaseModel):
+    work_type_id: UUID
     name: str
     code: str
     unit: str
     description: Optional[str] = None
 
 
-class UpdateWorkTypeRequest(BaseModel):
-    group_id: Optional[UUID] = None
+class UpdateWorkRequest(BaseModel):
+    work_type_id: Optional[UUID] = None
     name: Optional[str] = None
     code: Optional[str] = None
     unit: Optional[str] = None
     description: Optional[str] = None
 
 
-class WorkTypeSchema(IDMixinSchema):
+class WorkSchema(IDMixinSchema):
     model_config = ConfigDict(from_attributes=True)
 
-    group_id: UUID
+    work_type_id: UUID
     name: str
     code: str
     unit: str
@@ -60,10 +112,15 @@ class WorkTypeSchema(IDMixinSchema):
 
 class CreateTechSequenceItemRequest(BaseModel):
     housing_id: UUID
-    work_type_id: UUID
+    section_id: Optional[UUID] = None
+    work_id: UUID
     order: int
-    dependency_type: DependencyType = DependencyType.FINISH_TO_START
+    depends_on: List[UUID] = []
+    depends_on_ss: List[UUID] = []
     lag_days: int = 0
+    planning_type: Optional[PlanningType] = None
+    floor_sorting_direction: Optional[FloorSortingDirection] = None
+    lag_between_floors: Optional[int] = None
     estimated_days: int
     daily_norm_volume: Decimal
     total_volume: Decimal
@@ -73,14 +130,19 @@ class TechSequenceItemSchema(IDMixinSchema):
     model_config = ConfigDict(from_attributes=True)
 
     housing_id: UUID
-    work_type_id: UUID
+    section_id: Optional[UUID] = None
+    work_id: UUID
     order: int
-    dependency_type: DependencyType
+    depends_on: List[str] = []
+    depends_on_ss: List[str] = []
     lag_days: int
+    planning_type: Optional[PlanningType] = None
+    floor_sorting_direction: Optional[FloorSortingDirection] = None
+    lag_between_floors: Optional[int] = None
     estimated_days: int
     daily_norm_volume: Decimal
     total_volume: Decimal
-    work_type: Optional[WorkTypeSchema] = None
+    work: Optional[WorkSchema] = None
 
 
 class TechSequenceSchema(BaseModel):
@@ -89,5 +151,17 @@ class TechSequenceSchema(BaseModel):
     sequence: List[TechSequenceItemSchema] = []
 
 
-class WorkFilters(WorkGroupBaseFilters):
+class WorkSetFilters(BaseModel):
+    search: Optional[str] = Query(None, description="Search in name, code")
+
+
+class WorkGroupFilters(WorkSetBaseFilters):
+    search: Optional[str] = Query(None, description="Search in name, code")
+
+
+class WorkTypeFilters(WorkGroupBaseFilters):
+    search: Optional[str] = Query(None, description="Search in name, code")
+
+
+class WorkFilters(WorkTypeBaseFilters):
     search: Optional[str] = Query(None, description="Search in name, code")

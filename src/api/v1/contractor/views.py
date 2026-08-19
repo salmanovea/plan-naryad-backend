@@ -9,11 +9,8 @@ from src.api.schemes import (
     ResponseGroup,
 )
 from src.api.v1.contractor.schemes import (
-    ContractorAssignmentSchema,
-    ContractorAssignmentsResponse,
     ContractorFilters,
     ContractorSchema,
-    CreateContractorAssignmentRequest,
     CreateContractorRequest,
     UpdateContractorRequest,
 )
@@ -86,41 +83,3 @@ async def delete_contractor(
 ) -> DataResponseSchema[dict]:
     await service.contractor_manager.delete_by_id(contractor_id)
     return DataResponseSchema[dict](data={"deleted": str(contractor_id)})
-
-
-# ── Assignments ───────────────────────────────────────────────────────────────
-
-
-@contractor_router.get("/{housing_id}/assignments", responses=get_responses(ResponseGroup.ALL_ERRORS))
-@catch_all_exceptions
-async def list_assignments(
-    housing_id: UUID,
-    service: ContractorService = Depends(get_contractor_service),
-) -> DataResponseSchema[ContractorAssignmentsResponse]:
-    items = await service.assignment_manager.search(housing_id=housing_id)
-    return DataResponseSchema[ContractorAssignmentsResponse](
-        data=ContractorAssignmentsResponse(
-            housing_id=housing_id,
-            assignments=[ContractorAssignmentSchema.model_validate(i) for i in items],
-        )
-    )
-
-
-@contractor_router.post("/assignments", responses=get_responses(ResponseGroup.ALL_ERRORS), status_code=201)
-@catch_all_exceptions
-async def create_assignment(
-    body: CreateContractorAssignmentRequest,
-    service: ContractorService = Depends(get_contractor_service),
-) -> DataResponseSchema[ContractorAssignmentSchema]:
-    item = await service.assignment_manager.create(body.model_dump())
-    return DataResponseSchema[ContractorAssignmentSchema](data=ContractorAssignmentSchema.model_validate(item))
-
-
-@contractor_router.delete("/assignments/{assignment_id}", responses=get_responses(ResponseGroup.ALL_ERRORS))
-@catch_all_exceptions
-async def delete_assignment(
-    assignment_id: UUID,
-    service: ContractorService = Depends(get_contractor_service),
-) -> DataResponseSchema[dict]:
-    await service.assignment_manager.delete_by_id(assignment_id)
-    return DataResponseSchema[dict](data={"deleted": str(assignment_id)})

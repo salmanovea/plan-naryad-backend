@@ -87,13 +87,16 @@ async def get_project_forecast(
     return DataResponseSchema[ForecastResponse](data=data)
 
 
-@workforce_router.get("/objects/{object_id}/contractors", responses=get_responses(ResponseGroup.ALL_ERRORS))
+@workforce_router.get(
+    "/objects/{construction_object_id}/contractors",
+    responses=get_responses(ResponseGroup.ALL_ERRORS),
+)
 @catch_all_exceptions
 async def get_object_contractors(
-    object_id: UUID,
+    construction_object_id: UUID,
     service: WorkforceService = Depends(get_workforce_service),
 ) -> ListDataResponseSchema[ContractorHeadcountRow]:
-    items = await service.calc_object_contractors(object_id)
+    items = await service.calc_object_contractors(construction_object_id)
     return ListDataResponseSchema[ContractorHeadcountRow].create(list_data=items)
 
 
@@ -115,9 +118,6 @@ async def get_contractor_rating(
 ) -> ListDataResponseSchema[ContractorRatingRow]:
     items = await service.calc_contractor_rating()
     return ListDataResponseSchema[ContractorRatingRow].create(list_data=items)
-
-
-# ── WfProject ─────────────────────────────────────────────────────────────────
 
 
 @workforce_router.get("/projects", responses=get_responses(ResponseGroup.ALL_ERRORS))
@@ -185,9 +185,6 @@ async def delete_project(
     return DataResponseSchema[dict](data={"deleted": str(project_id)})
 
 
-# ── WfProjectObject ───────────────────────────────────────────────────────────
-
-
 @workforce_router.get("/projects/{project_id}/objects", responses=get_responses(ResponseGroup.ALL_ERRORS))
 @catch_all_exceptions
 async def list_project_objects(
@@ -217,17 +214,14 @@ async def create_project_object(
     return DataResponseSchema[WfProjectObjectSchema](data=WfProjectObjectSchema.model_validate(item))
 
 
-@workforce_router.delete("/objects/{object_id}", responses=get_responses(ResponseGroup.ALL_ERRORS))
+@workforce_router.delete("/objects/{construction_object_id}", responses=get_responses(ResponseGroup.ALL_ERRORS))
 @catch_all_exceptions
 async def delete_project_object(
-    object_id: UUID,
+    construction_object_id: UUID,
     service: WorkforceService = Depends(get_workforce_service),
 ) -> DataResponseSchema[dict]:
-    await service.wf_project_object_manager.delete_by_id(object_id)
-    return DataResponseSchema[dict](data={"deleted": str(object_id)})
-
-
-# ── WorkforceNorm ─────────────────────────────────────────────────────────────
+    await service.wf_project_object_manager.delete_by_id(construction_object_id)
+    return DataResponseSchema[dict](data={"deleted": str(construction_object_id)})
 
 
 @workforce_router.get("/norms", responses=get_responses(ResponseGroup.ALL_ERRORS))
@@ -235,7 +229,7 @@ async def delete_project_object(
 async def list_norms(
     service: WorkforceService = Depends(get_workforce_service),
 ) -> ListDataResponseSchema[WfWorkforceNormSchema]:
-    items = await service.wf_workforce_norm_manager.search(order_by=["work_type_id"])
+    items = await service.wf_workforce_norm_manager.search(order_by=["work_id"])
     return ListDataResponseSchema[WfWorkforceNormSchema].create(
         list_data=[WfWorkforceNormSchema.model_validate(i) for i in items],
     )
@@ -268,15 +262,15 @@ async def delete_norm(
 @catch_all_exceptions
 async def list_headcount_facts(
     project_id: Optional[UUID] = Query(None),
-    object_id: Optional[UUID] = Query(None),
+    construction_object_id: Optional[UUID] = Query(None),
     pagination: PaginationParams = Depends(pagination_params),
     service: WorkforceService = Depends(get_workforce_service),
 ) -> ListDataResponseSchema[WfHeadcountFactSchema]:
     filters: dict = {}
     if project_id:
         filters["project_id"] = project_id
-    if object_id:
-        filters["object_id"] = object_id
+    if construction_object_id:
+        filters["construction_object_id"] = construction_object_id
     items = await service.wf_headcount_fact_manager.search(order_by=["-fact_date"], pagination=pagination, **filters)
     total = await service.wf_headcount_fact_manager.count(**filters)
     return ListDataResponseSchema[WfHeadcountFactSchema].create(
@@ -334,14 +328,14 @@ async def create_headcount_plan(
 @catch_all_exceptions
 async def list_challenges(
     project_id: Optional[UUID] = Query(None),
-    object_id: Optional[UUID] = Query(None),
+    construction_object_id: Optional[UUID] = Query(None),
     service: WorkforceService = Depends(get_workforce_service),
 ) -> ListDataResponseSchema[ChallengeSchema]:
     filters: dict = {}
     if project_id:
         filters["project_id"] = project_id
-    if object_id:
-        filters["object_id"] = object_id
+    if construction_object_id:
+        filters["construction_object_id"] = construction_object_id
     items = await service.wf_challenge_manager.search(order_by=["-period_month"], **filters)
     return ListDataResponseSchema[ChallengeSchema].create(
         list_data=[ChallengeSchema.model_validate(i) for i in items],

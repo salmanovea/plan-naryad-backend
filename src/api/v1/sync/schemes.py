@@ -23,9 +23,8 @@ class SyncEntity(str, Enum):
         one `sync_objects` traversal; work_kinds/works → one `sync_work_catalog`);
       - offline `/sync/import` maps each to its own `import_*` handler.
 
-    Terminology (see docs/sync-mapping.md §3): WORK_KINDS («Виды работ») is the
-    local `work_groups` table (= Raport WorkType); WORKS («Работы») is the local
-    `work_types` table (= Raport Work).
+    Catalogue names match Raport one-to-one (decision Р6b): WORK_KINDS («Виды
+    работ») is the local `work_types` table, WORKS («Работы») is `works`.
     """
 
     USERS = "users"
@@ -38,7 +37,6 @@ class SyncEntity(str, Enum):
     FLOORS = "floors"
     WORK_KINDS = "work_kinds"
     WORKS = "works"
-    ASSIGNMENTS = "assignments"
     TECH_SEQUENCE = "tech_sequence"
 
 
@@ -114,15 +112,27 @@ class ImportWorkGroupsRequest(BaseModel):
 
 class ImportWorkTypeItem(BaseModel):
     raport_id: str
-    work_group_raport_id: str
+    work_group_raport_id: Optional[str] = None
+    name: str
+    code: str
+    description: Optional[str] = None
+
+
+class ImportWorkTypesRequest(BaseModel):
+    items: List[ImportWorkTypeItem]
+
+
+class ImportWorkItem(BaseModel):
+    raport_id: str
+    work_type_raport_id: str
     name: str
     code: str
     unit: str = "шт"
     description: Optional[str] = None
 
 
-class ImportWorkTypesRequest(BaseModel):
-    items: List[ImportWorkTypeItem]
+class ImportWorksRequest(BaseModel):
+    items: List[ImportWorkItem]
 
 
 class ImportContractorItem(BaseModel):
@@ -201,5 +211,5 @@ class SyncImportRequest(BaseModel):
     housings: Optional[List[ImportHousingItem]] = None
     sections: Optional[List[ImportSectionItem]] = None
     floors: Optional[List[ImportFloorItem]] = None
-    work_kinds: Optional[List[ImportWorkGroupItem]] = None  # «Виды работ» → work_groups
-    works: Optional[List[ImportWorkTypeItem]] = None  # «Работы» → work_types
+    work_kinds: Optional[List[ImportWorkTypeItem]] = None  # «Виды работ» → work_types
+    works: Optional[List[ImportWorkItem]] = None  # «Работы» → works
