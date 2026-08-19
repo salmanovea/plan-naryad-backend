@@ -25,12 +25,13 @@ RAPORT_FLOOR_ID = str(uuid.uuid4())
 RAPORT_CONTRACTOR_ID = str(uuid.uuid4())
 RAPORT_CONTRACT_ID = str(uuid.uuid4())
 RAPORT_USER_ID = str(uuid.uuid4())
-# Terminology (docs/sync-mapping.md §3): Raport WorkGroup is transit-only;
-# Raport WorkType → local WorkGroup; Raport Work → local WorkType.
-RAPORT_WORK_GROUP_ID = str(uuid.uuid4())  # Raport WorkGroup (traversed, not stored)
-RAPORT_WORK_TYPE_ID = str(uuid.uuid4())  # Raport WorkType → local WorkGroup
-RAPORT_WORK_ID = str(uuid.uuid4())  # Raport Work → local WorkType
-RAPORT_WORK_ID_2 = str(uuid.uuid4())  # second Raport Work → second local WorkType
+# Catalogue names now match Raport one-to-one (decision Р6b): work_set →
+# work_group → work_type → work, all four stored locally.
+RAPORT_WORK_SET_ID = str(uuid.uuid4())
+RAPORT_WORK_GROUP_ID = str(uuid.uuid4())
+RAPORT_WORK_TYPE_ID = str(uuid.uuid4())
+RAPORT_WORK_ID = str(uuid.uuid4())
+RAPORT_WORK_ID_2 = str(uuid.uuid4())
 RAPORT_TEMPLATE_ID = str(uuid.uuid4())  # default plan-template id
 TASK_1_ID = str(uuid.uuid4())
 TASK_2_ID = str(uuid.uuid4())
@@ -39,7 +40,7 @@ TASK_2_ID = str(uuid.uuid4())
 def _make_report_api_mock(overrides: dict | None = None) -> MagicMock:
     """Return a ReportApi mock whose `list_all` dispatches by endpoint method name.
 
-    `overrides` replaces specific method pages (e.g. an empty assignments snapshot).
+    `overrides` replaces specific method pages (e.g. a custom catalogue snapshot).
     """
     pages: dict[str, list[dict]] = {
         "list_projects": [
@@ -86,39 +87,6 @@ def _make_report_api_mock(overrides: dict | None = None) -> MagicMock:
                 "is_warranty_letter": False,
             }
         ],
-        # Raport WorkGroup — traversed only, not stored locally.
-        "list_work_groups": [{"id": RAPORT_WORK_GROUP_ID, "name": "Монолит"}],
-        # Raport WorkType → local WorkGroup («Виды работ»).
-        "list_work_group_work_types": [{"id": RAPORT_WORK_TYPE_ID, "name": "Монтаж ЖБИ"}],
-        # Raport Work → local WorkType («Работы»); unit taken from the default unit.
-        "list_work_type_works": [
-            {
-                "id": RAPORT_WORK_ID,
-                "name": "Заливка перекрытий",
-                "units": [
-                    {"id": str(uuid.uuid4()), "name": "м²", "is_default": True},
-                    {"id": str(uuid.uuid4()), "name": "%", "is_default": False},
-                ],
-                "work_type": {"id": RAPORT_WORK_TYPE_ID, "name": "Монтаж ЖБИ"},
-            },
-            {
-                "id": RAPORT_WORK_ID_2,
-                "name": "Демонтаж",
-                "units": [{"id": str(uuid.uuid4()), "name": "шт", "is_default": True}],
-                "work_type": {"id": RAPORT_WORK_TYPE_ID, "name": "Монтаж ЖБИ"},
-            },
-        ],
-        # Aggregated assignment: work_group is the (ignored) Raport WorkGroup;
-        # each work_type is a Raport WorkType → a local WorkGroup.
-        "list_assignments_aggregated": [
-            {
-                "contractor": {"id": RAPORT_CONTRACTOR_ID, "name": "ООО Рапорт Строй"},
-                "housing": {"id": RAPORT_HOUSING_ID, "name": "Корпус 5А"},
-                "section": {"id": RAPORT_SECTION_ID, "name": "Секция 1"},
-                "work_group": {"id": RAPORT_WORK_GROUP_ID, "name": "Монолит"},
-                "work_types": [{"id": RAPORT_WORK_TYPE_ID, "name": "Монтаж ЖБИ"}],
-            }
-        ],
     }
     overrides = overrides or {}
     # `plan` override lets a test supply an empty/custom tech-sequence snapshot.
@@ -135,9 +103,38 @@ def _make_report_api_mock(overrides: dict | None = None) -> MagicMock:
     mock.list_plan_templates = AsyncMock(
         return_value={"data": [{"id": RAPORT_TEMPLATE_ID, "is_default": True}], "pagination": {}}
     )
+    mock.get_works_structure = AsyncMock(return_value=overrides.get("works_structure", _DEFAULT_WORKS_STRUCTURE))
     mock.get_plan_template_data = AsyncMock(return_value={"plan": plan})
     mock.get_calendar_plan = AsyncMock(return_value={"plan": plan})
     return mock
+
+
+# The whole catalogue arrives flat from GET /works/structure, one row per node:
+# level 0 = work_set, 1 = work_group, 2 = work_type, 3 = work (the only level with units).
+_DEFAULT_WORKS_STRUCTURE = {
+    "data": [
+        {"id": RAPORT_WORK_SET_ID, "parent_id": None, "title": "Этап 1", "level": 0},
+        {"id": RAPORT_WORK_GROUP_ID, "parent_id": RAPORT_WORK_SET_ID, "title": "Монолит", "level": 1},
+        {"id": RAPORT_WORK_TYPE_ID, "parent_id": RAPORT_WORK_GROUP_ID, "title": "Монтаж ЖБИ", "level": 2},
+        {
+            "id": RAPORT_WORK_ID,
+            "parent_id": RAPORT_WORK_TYPE_ID,
+            "title": "Заливка перекрытий",
+            "level": 3,
+            "units": [
+                {"id": str(uuid.uuid4()), "name": "м²", "is_default": True},
+                {"id": str(uuid.uuid4()), "name": "%", "is_default": False},
+            ],
+        },
+        {
+            "id": RAPORT_WORK_ID_2,
+            "parent_id": RAPORT_WORK_TYPE_ID,
+            "title": "Демонтаж",
+            "level": 3,
+            "units": [{"id": str(uuid.uuid4()), "name": "шт", "is_default": True}],
+        },
+    ]
+}
 
 
 # Default plan: task T2 (work #2) depends on task T1 (work #1).
@@ -205,8 +202,10 @@ async def test_sync_work_catalog_returns_200(client):
     assert response.status_code == 200
     body = response.json()
     assert body["code"] == "200"
+    assert body["data"]["work_sets"] == 1
     assert body["data"]["work_groups"] == 1
-    assert body["data"]["work_types"] == 2
+    assert body["data"]["work_types"] == 1
+    assert body["data"]["works"] == 2
 
 
 async def test_sync_work_catalog_upserts_rows(client, async_test_session):
@@ -216,21 +215,27 @@ async def test_sync_work_catalog_upserts_rows(client, async_test_session):
 
     from src.models import managers
 
-    # local WorkGroup («Виды работ») comes from the Raport WorkType
-    groups = await managers.WorkGroupManager(async_test_session).search(raport_id=RAPORT_WORK_TYPE_ID)
-    assert len(groups) == 1
-    assert groups[0].name == "Монтаж ЖБИ"
-    assert groups[0].code == RAPORT_WORK_TYPE_ID
-    # the Raport WorkGroup itself must not be stored
-    assert await managers.WorkGroupManager(async_test_session).search(raport_id=RAPORT_WORK_GROUP_ID) == []
+    # All four levels land under their Raport names, each linked to the one above.
+    sets = await managers.WorkSetManager(async_test_session).search(raport_id=RAPORT_WORK_SET_ID)
+    assert len(sets) == 1
+    assert sets[0].name == "Этап 1"
 
-    # local WorkType («Работы») comes from the Raport Work, nested under the local WorkGroup
-    types = await managers.WorkTypeManager(async_test_session).search(raport_id=RAPORT_WORK_ID)
+    groups = await managers.WorkGroupManager(async_test_session).search(raport_id=RAPORT_WORK_GROUP_ID)
+    assert len(groups) == 1
+    assert groups[0].name == "Монолит"
+    assert groups[0].work_set_id == sets[0].id
+
+    types = await managers.WorkTypeManager(async_test_session).search(raport_id=RAPORT_WORK_TYPE_ID)
     assert len(types) == 1
-    assert types[0].name == "Заливка перекрытий"
-    assert types[0].code == RAPORT_WORK_ID
-    assert types[0].unit == "м²"  # default unit
-    assert types[0].group_id == groups[0].id
+    assert types[0].name == "Монтаж ЖБИ"
+    assert types[0].work_group_id == groups[0].id
+
+    works = await managers.WorkManager(async_test_session).search(raport_id=RAPORT_WORK_ID)
+    assert len(works) == 1
+    assert works[0].name == "Заливка перекрытий"
+    assert works[0].code == RAPORT_WORK_ID
+    assert works[0].unit == "м²"  # default unit
+    assert works[0].work_type_id == types[0].id
 
 
 async def test_sync_work_catalog_idempotent(client):
@@ -240,7 +245,7 @@ async def test_sync_work_catalog_idempotent(client):
         response = await client.post(f"{API}/sync/work-catalog")
 
     assert response.status_code == 200
-    assert response.json()["data"]["work_groups"] == 1
+    assert response.json()["data"]["works"] == 2
 
 
 # ---------------------------------------------------------------------------
@@ -271,11 +276,11 @@ async def test_sync_objects_upserts_full_hierarchy(client, async_test_session):
 
     from src.models import managers
 
-    projects = await managers.WfProjectManager(async_test_session).search(raport_id=RAPORT_PROJECT_ID)
+    projects = await managers.ProjectManager(async_test_session).search(raport_id=RAPORT_PROJECT_ID)
     assert len(projects) == 1
     assert projects[0].name == "ЖК Тест"
 
-    objects = await managers.WfProjectObjectManager(async_test_session).search(raport_id=RAPORT_CO_ID)
+    objects = await managers.ConstructionObjectManager(async_test_session).search(raport_id=RAPORT_CO_ID)
     assert len(objects) == 1
     assert objects[0].name == "Корпус 5"
 
@@ -383,66 +388,6 @@ async def test_sync_contracts_resolves_contractor(client, async_test_session):
 
 
 # ---------------------------------------------------------------------------
-# sync/assignments
-# ---------------------------------------------------------------------------
-
-
-async def _sync_assignment_prerequisites(client):
-    """Sync the contractor/housing/section/work_group an assignment resolves against."""
-    await client.post(f"{API}/sync/contractors")
-    await client.post(f"{API}/sync/objects")
-    await client.post(f"{API}/sync/work-catalog")
-
-
-@pytest.mark.smoke
-async def test_sync_assignments_explodes_and_resolves(client, async_test_session):
-    mock = _make_report_api_mock()
-    with patch("src.services.sync.service.ReportApi", return_value=mock):
-        await _sync_assignment_prerequisites(client)
-        response = await client.post(f"{API}/sync/assignments")
-
-    assert response.status_code == 200
-    data = response.json()["data"]
-    assert data["assignments"] == 1
-    assert data["skipped"] == 0
-
-    from src.models import managers
-
-    # local WorkGroup resolved from the Raport WorkType id
-    work_group = (await managers.WorkGroupManager(async_test_session).search(raport_id=RAPORT_WORK_TYPE_ID))[0]
-    contractor = (await managers.ContractorManager(async_test_session).search(raport_id=RAPORT_CONTRACTOR_ID))[0]
-
-    rows = await managers.ContractorAssignmentManager(async_test_session).search(
-        contractor_id=contractor.id, work_group_id=work_group.id
-    )
-    assert len(rows) == 1
-    assert rows[0].source == "raport"
-    assert rows[0].work_type_ids == []
-
-
-async def test_sync_assignments_snapshot_delete(client, async_test_session):
-    """A raport assignment missing from the new snapshot is deleted within scope."""
-    with patch("src.services.sync.service.ReportApi", return_value=_make_report_api_mock()):
-        await _sync_assignment_prerequisites(client)
-        await client.post(f"{API}/sync/assignments", params={"housing_raport_id": RAPORT_HOUSING_ID})
-
-    # re-sync the same housing with an empty aggregate → the row is reconciled away
-    empty = _make_report_api_mock(overrides={"list_assignments_aggregated": []})
-    with patch("src.services.sync.service.ReportApi", return_value=empty):
-        resp = await client.post(f"{API}/sync/assignments", params={"housing_raport_id": RAPORT_HOUSING_ID})
-
-    assert resp.status_code == 200
-    data = resp.json()["data"]
-    assert data["assignments"] == 0
-    assert data["deleted"] >= 1
-
-    from src.models import managers
-
-    housing = (await managers.HousingManager(async_test_session).search(raport_id=RAPORT_HOUSING_ID))[0]
-    remaining = await managers.ContractorAssignmentManager(async_test_session).search(
-        housing_id=housing.id, source="raport"
-    )
-    assert remaining == []
 
 
 # ---------------------------------------------------------------------------
@@ -469,12 +414,12 @@ async def test_sync_tech_sequence_builds_from_template(client, async_test_sessio
 
     from src.models import managers
 
-    wt1 = (await managers.WorkTypeManager(async_test_session).search(raport_id=RAPORT_WORK_ID))[0]
-    wt2 = (await managers.WorkTypeManager(async_test_session).search(raport_id=RAPORT_WORK_ID_2))[0]
+    wt1 = (await managers.WorkManager(async_test_session).search(raport_id=RAPORT_WORK_ID))[0]
+    wt2 = (await managers.WorkManager(async_test_session).search(raport_id=RAPORT_WORK_ID_2))[0]
     housing = (await managers.HousingManager(async_test_session).search(raport_id=RAPORT_HOUSING_ID))[0]
 
     items = await managers.TechSequenceItemManager(async_test_session).search(housing_id=housing.id, source="raport")
-    by_wt = {i.work_type_id: i for i in items}
+    by_wt = {i.work_id: i for i in items}
     assert len(by_wt) == 2
     # task T2 (wt2) depends on task T1 (wt1)
     assert by_wt[wt2.id].depends_on == [str(wt1.id)]
@@ -531,15 +476,13 @@ async def test_sync_all_no_body_syncs_everything(client):
         "contracts",
         "objects",
         "work_catalog",
-        "assignments",
         "tech_sequence",
     }
     assert data["users"]["users"] == 1
     assert data["contractors"]["contractors"] == 1
     assert data["contracts"]["contracts"] == 1
     assert data["objects"]["projects"] == 1
-    assert data["work_catalog"]["work_groups"] == 1
-    assert data["assignments"]["assignments"] == 1
+    assert data["work_catalog"]["works"] == 2
     assert data["tech_sequence"]["tech_sequence"] >= 1
 
 

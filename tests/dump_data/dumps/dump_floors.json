@@ -4,13 +4,15 @@
     "section_id": "33333333-3333-3333-3333-333333333333",
     "floor_number": 1,
     "name": "Этаж 1",
-    "description": null
+    "description": null,
+    "raport_id": "30000000-0000-0000-0000-000000000001"
   },
   {
     "id": "66666666-6666-6666-6666-666666666666",
     "section_id": "33333333-3333-3333-3333-333333333333",
     "floor_number": 2,
     "name": "Этаж 2",
-    "description": null
+    "description": null,
+    "raport_id": "30000000-0000-0000-0000-000000000002"
   }
 ]
