@@ -23,7 +23,7 @@
                 <div class="card-body">
                     <p class="text-muted mb-0">
                         Запускает синхронизацию всех справочников (users, contractors, contracts,
-                        objects, work-catalog, assignments, tech-sequence). Может занять несколько минут.
+                        objects, work-catalog, tech-sequence). Может занять несколько минут.
                     </p>
                 </div>
                 <div class="card-footer">
@@ -129,56 +129,6 @@
                             <i class="fa-solid fa-rotate me-1"></i>Запустить
                         </button>
                     </form>
-                </div>
-            </div>
-        </div>
-
-        <div class="col-md-4">
-            <div class="card">
-                <div class="card-header">
-                    <h3 class="card-title">
-                        <i class="fa-solid fa-users me-2"></i>Пользователи
-                    </h3>
-                </div>
-                <div class="card-body">
-                    <p class="text-muted">
-                        Справочник пользователей Рапорта (с проектами и подрядчиками).
-                    </p>
-                </div>
-                <div class="card-footer">
-                    <form action="/pn/admin/sync/action/users" method="POST">
-                        <button type="submit" class="btn btn-primary w-100">
-                            <i class="fa-solid fa-rotate me-1"></i>Запустить
-                        </button>
-                    </form>
-                </div>
-            </div>
-        </div>
-
-        <div class="col-md-4">
-            <div class="card">
-                <div class="card-header">
-                    <h3 class="card-title">
-                        <i class="fa-solid fa-people-arrows me-2"></i>Назначения подрядчиков
-                    </h3>
-                </div>
-                <div class="card-body">
-                    <p class="text-muted">
-                        Агрегированные назначения (подрядчик → корпус/секция/группа работ).
-                        Строки source="raport", отсутствующие в снимке, удаляются.
-                    </p>
-                    <form action="/pn/admin/sync/action/assignments" method="POST" id="form-assignments">
-                        <div class="mb-2">
-                            <label class="form-label">housing_raport_id (опционально)</label>
-                            <input type="text" name="housing_raport_id" class="form-control"
-                                   placeholder="ограничить одним корпусом">
-                        </div>
-                    </form>
-                </div>
-                <div class="card-footer">
-                    <button type="submit" form="form-assignments" class="btn btn-primary w-100">
-                        <i class="fa-solid fa-rotate me-1"></i>Запустить
-                    </button>
                 </div>
             </div>
         </div>
