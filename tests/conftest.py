@@ -21,6 +21,14 @@ from src.config.settings import app_config  # noqa: E402
 _TEST_DB_NAME = app_config.db_test_database_name or f"{app_config.db_name}_test"
 app_config.db_name = _TEST_DB_NAME
 
+from src.middlewares.raport_auth.settings import auth_settings  # noqa: E402
+
+# The local .env may well carry AUTH_ENABLED=true — that is how the service is run against the
+# real Keycloak. API tests must not depend on holding a token, and authentication has its own
+# tests, so the block is switched off here explicitly rather than left to the environment.
+auth_settings.auth_enabled = False
+app_config.auth_enabled = False
+
 _TEST_DB_CREDS = {
     "drivername": app_config.db_driver_name,
     "username": app_config.db_user,

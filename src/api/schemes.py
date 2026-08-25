@@ -268,14 +268,41 @@ class ContractorBaseFilters(BaseModel):
     contractor_id__in: Optional[List[UUID]] = Field(Query(None, description="Filter by contractor id list"))
 
 
+class WorkSetBaseFilters(BaseModel):
+    work_set_id: Optional[UUID] = Query(None, description="Filter by work_set id")
+    work_set_id__in: Optional[List[UUID]] = Field(Query(None, description="Filter by work_set id list"))
+
+
 class WorkGroupBaseFilters(BaseModel):
     work_group_id: Optional[UUID] = Query(None, description="Filter by work_group id")
     work_group_id__in: Optional[List[UUID]] = Field(Query(None, description="Filter by work_group id list"))
 
 
 class WorkTypeBaseFilters(BaseModel):
-    work_type_id: Optional[UUID] = Query(None, description="Filter by work_type id")
-    work_type_id__in: Optional[List[UUID]] = Field(Query(None, description="Filter by work_type id list"))
+    work_id: Optional[UUID] = Query(None, description="Filter by work_type id")
+    work_id__in: Optional[List[UUID]] = Field(Query(None, description="Filter by work_type id list"))
+
+
+class WorkBaseFilters(BaseModel):
+    work_id: Optional[UUID] = Query(None, description="Filter by work id")
+    work_id__in: Optional[List[UUID]] = Field(Query(None, description="Filter by work id list"))
+
+
+class ProjectBaseFilters(BaseModel):
+    project_id: Optional[UUID] = Query(None, description="Filter by project id")
+    project_id__in: Optional[List[UUID]] = Field(Query(None, description="Filter by project id list"))
+
+
+class QueueBaseFilters(BaseModel):
+    queue_id: Optional[UUID] = Query(None, description="Filter by queue id")
+    queue_id__in: Optional[List[UUID]] = Field(Query(None, description="Filter by queue id list"))
+
+
+class ConstructionObjectBaseFilters(BaseModel):
+    construction_object_id: Optional[UUID] = Query(None, description="Filter by construction object id")
+    construction_object_id__in: Optional[List[UUID]] = Field(
+        Query(None, description="Filter by construction object id list")
+    )
 
 
 class TimestampBaseFilters(BaseModel):

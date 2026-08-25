@@ -93,7 +93,7 @@ class ProjectDetailResponse(BaseModel):
 
 
 class ForecastRow(BaseModel):
-    object_id: UUID
+    construction_object_id: UUID
     object_name: str
     work_type: NamedEntitySchema
     remaining_amount: Optional[Decimal]
@@ -146,7 +146,7 @@ class ViolationOut(BaseModel):
 
     id: UUID
     project_id: UUID
-    object_id: UUID
+    construction_object_id: UUID
     work_type: NamedEntitySchema
     contractor_id: Optional[UUID] = None
     violation_date: date

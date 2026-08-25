@@ -58,7 +58,10 @@ class ReportApi:
         clean_params = {k: v for k, v in (params or {}).items() if v is not None}
         url = f"{self.base_url}{path}"
 
-        async with httpx.AsyncClient(timeout=self.timeout) as http:
+        async with httpx.AsyncClient(
+            timeout=self.timeout,
+            verify=app_config.keycloak_verify_ssl,
+        ) as http:
             response = await http.request(
                 method,
                 url,
@@ -222,9 +225,62 @@ class ReportApi:
     async def get_works_structure(self, **params: Any) -> Any:
         return await self._request("GET", "/api/v1/works/structure", params=params)
 
-    # ------------------------------------------------------------------
-    # Plans — source of the technological sequence (plan.links[])
-    # ------------------------------------------------------------------
+    async def get_housing_work_cells_by_work(self, housing_id: UUID, work_id: UUID, **params: Any) -> Any:
+        """Cells of one work across a housing.
+
+        Returns `{"overall": {...}, "data": [<cell>, ...]}` where each cell carries
+        `section`, `floor`, `work_cell_id`, `percent_fact` and
+        `work_cell_contractors_data[]` (wcc id + contractor). The work itself is the
+        path parameter, so this is the only endpoint that ties a cell to a work.
+
+        Note: the OpenAPI schema declares `data` as a single object, but the handler
+        returns a list — see `_prepare_response_data_2` in megashablon.
+        """
+        return await self._request("GET", f"/api/v1/work-cells/{housing_id}/work/{work_id}", params=params)
+
+    async def list_section_work_cells(self, section_id: UUID, **params: Any) -> Any:
+        """Cells of a whole section, one row per work.
+
+        Returns `{"overall": {...}, "data": [<work>, ...]}`; each row carries `work_type`,
+        `work_group` and `work_cells[]`, and every cell names its `floor`, `is_enabled` and
+        `work_cell_contractors_data[]`. This is the only endpoint that says **which works apply
+        to which floor**, which is what narrows the manual-add dialog.
+
+        Accepts `template_id`; omit it (never send it empty) to take works from every template.
+        Answered 500 on every section until Raport's fix of 17 Aug 2026 — see item 6 in
+        docs/raport-change-requests-done.md.
+        """
+        return await self._request("GET", f"/api/v1/work-cells/section/{section_id}", params=params)
+
+    async def list_work_cell_details(self, work_cell_ids: str, **params: Any) -> Any:
+        """Per-cell detail incl. `history[]` (dated facts) and contractor identity.
+
+        `work_cell_ids` is a comma-separated list.
+        """
+        return await self._request(
+            "GET",
+            "/api/v1/work-cells/details",
+            params={"work_cell_ids": work_cell_ids, **params},
+        )
+
+    async def list_work_facts(self, **params: Any) -> Any:
+        """Flat list of work facts, filterable by `housing_id` and `work_date__gte/__lte`.
+
+        Since the Raport change of 17 Aug 2026 each row carries `percent` — the payload that
+        actually matters, because 99.2% of facts have `volume = 0` — plus `contractor` and
+        `work_cell_contractor_id`. Those two come from `work_cell_contractor` and are empty
+        on most rows, so the contractor is resolved locally from the cell's assignment.
+        """
+        return await self._request("GET", "/api/v1/work-facts", params=params)
+
+    async def list_contractor_works(self, **params: Any) -> Any:
+        """Detailed contractor assignments down to the floor.
+
+        Filterable by `housing_id`, `section_id`, `floor_id`, `work_id`, `contractor_id`
+        and paginated, so both callers (plan generation per housing, the manual-add
+        dropdown per work+floor) stay cheap.
+        """
+        return await self._request("GET", "/api/v1/contractor-works", params=params)
 
     async def check_calendar_plan(self, **params: Any) -> Any:
         return await self._request("GET", "/api/v1/calendar-plans/check", params=params)

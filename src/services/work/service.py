@@ -8,8 +8,10 @@ from src.services.common import BaseService
 
 class WorkService(BaseService):
     def __init__(self, db: AsyncSession):
+        self.work_set_manager = managers.WorkSetManager(db)
         self.work_group_manager = managers.WorkGroupManager(db)
         self.work_type_manager = managers.WorkTypeManager(db)
+        self.work_manager = managers.WorkManager(db)
         self.tech_sequence_manager = managers.TechSequenceItemManager(db)
         self.housing_manager = managers.HousingManager(db)
 

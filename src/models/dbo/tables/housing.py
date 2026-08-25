@@ -9,7 +9,7 @@ from src.models.dbo.mixins import IDMixin, RaportMixin
 from src.models.dbo.base_model import Base
 
 if TYPE_CHECKING:
-    from src.models.dbo.tables.workforce import WfProjectObject
+    from src.models.dbo.tables.project_structure import ConstructionObject
 
 
 class Housing(IDMixin, RaportMixin, Base):
@@ -22,7 +22,7 @@ class Housing(IDMixin, RaportMixin, Base):
     description: Mapped[Optional[str]] = mapped_column(String(1000))
     construction_object_id: Mapped[Optional[UUID]] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("wf_project_objects.id", name="fk_housings_construction_object_id"),
+        ForeignKey("construction_objects.id", name="fk_housings_construction_object_id"),
         nullable=True,
         index=True,
     )
@@ -30,7 +30,10 @@ class Housing(IDMixin, RaportMixin, Base):
     def __str__(self) -> str:
         return self.name
 
-    construction_object: Mapped[Optional["WfProjectObject"]] = relationship(foreign_keys=[construction_object_id])  # type: ignore[name-defined]
+    construction_object: Mapped[Optional["ConstructionObject"]] = relationship(  # type: ignore[name-defined]
+        back_populates="housings",
+        foreign_keys=[construction_object_id],
+    )
     sections: Mapped[List["Section"]] = relationship(back_populates="housing", cascade="all, delete-orphan")
 
 

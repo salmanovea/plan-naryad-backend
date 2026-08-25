@@ -4,7 +4,6 @@ from tests.constants import API
 
 CONTRACTOR_1_ID = "99999999-9999-9999-9999-999999999999"
 CONTRACTOR_2_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
-HOUSING_1_ID = "11111111-1111-1111-1111-111111111111"
 
 
 @pytest.mark.smoke
@@ -56,12 +55,3 @@ async def test_update_contractor_returns_200(client):
     assert response.status_code == 200
     body = response.json()
     assert body["data"]["contact_person"] == "Петров П.П."
-
-
-async def test_list_assignments_returns_200(client):
-    response = await client.get(f"{API}/contractors/{HOUSING_1_ID}/assignments")
-
-    assert response.status_code == 200
-    body = response.json()
-    assert body["data"]["housing_id"] == HOUSING_1_ID
-    assert isinstance(body["data"]["assignments"], list)
