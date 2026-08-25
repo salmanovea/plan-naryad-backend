@@ -63,13 +63,17 @@ class DashboardService(BaseService):
         if section_id:
             scoped_filters["section_id"] = section_id
 
+        fact_filters: dict = dict(scoped_filters)
+        fact_filters["work_date__gte"] = fact_filters.pop("date__gte")
+        fact_filters["work_date__lte"] = fact_filters.pop("date__lte")
+
         # Alerts have no section_id column — they stay at housing granularity.
         alert_filters: dict = {"date__gte": date_from, "date__lte": date_to}
         if housing_id:
             alert_filters["housing_id"] = housing_id
 
         total_plan_items = await self.plan_item_manager.count(**scoped_filters)
-        total_work_facts = await self.work_fact_manager.count(**scoped_filters)
+        total_work_facts = await self.work_fact_manager.count(**fact_filters)
         total_reconciliation_results = await self.reconciliation_manager.count(**scoped_filters)
         total_alerts = await self.alert_manager.count(**alert_filters)
         total_critical_alerts = await self.alert_manager.count(**alert_filters, level="critical")
@@ -124,13 +128,17 @@ class DashboardService(BaseService):
                 "housing_id": housing_id,
                 "section_id": section.id,
             }
+            fact_scoped: dict = dict(scoped)
+            fact_scoped["work_date__gte"] = fact_scoped.pop("date__gte")
+            fact_scoped["work_date__lte"] = fact_scoped.pop("date__lte")
+
             completion_rate, submission_rate = await self._completion_rates(**scoped)
             rows.append(
                 {
                     "section_id": section.id,
                     "section_name": section.name,
                     "total_plan_items": await self.plan_item_manager.count(**scoped),
-                    "total_work_facts": await self.work_fact_manager.count(**scoped),
+                    "total_work_facts": await self.work_fact_manager.count(**fact_scoped),
                     "total_reconciliation_results": await self.reconciliation_manager.count(**scoped),
                     "completion_rate": completion_rate,
                     "submission_rate": submission_rate,

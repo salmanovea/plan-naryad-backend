@@ -6,13 +6,8 @@ from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from src.api.schemes import PaginationParams
-from src.models.dbo.tables.contractor import Contractor
-from src.models.dbo.tables.housing import Floor, Housing, Section
 from src.models.dbo.tables.reconciliation import DailySummary, ReconciliationResult
-from src.models.dbo.tables.work import WorkType
 from src.models.managers.common import BaseManager
-from src.utils.helpers import get_paginated_query
 
 
 class ReconciliationResultManager(BaseManager[ReconciliationResult]):
@@ -26,13 +21,13 @@ class ReconciliationResultManager(BaseManager[ReconciliationResult]):
     def get_enriched_query(self) -> Select:
         """Base query eager-loading the relations needed to denormalize labels.
 
-        Loads section/floor/work_type/contractor/housing so the service can fill
+        Loads section/floor/work/contractor/housing so the service can fill
         the `*_name` fields without lazy-loading inside an async context.
         """
         return select(ReconciliationResult).options(
             selectinload(ReconciliationResult.section),
             selectinload(ReconciliationResult.floor),
-            selectinload(ReconciliationResult.work_type),
+            selectinload(ReconciliationResult.work),
             selectinload(ReconciliationResult.contractor),
             selectinload(ReconciliationResult.housing),
         )
@@ -58,6 +53,20 @@ class DailySummaryManager(BaseManager[DailySummary]):
 
     def __init__(self, db: AsyncSession):
         super().__init__(db)
+
+    def get_enriched_query(self) -> Select:
+        """Base query eager-loading `housing` so `housing_name` can be filled.
+
+        `DailySummarySchema` carries the housing name; a lazy load during serialisation
+        fails with MissingGreenlet outside the async context.
+        """
+        return select(DailySummary).options(selectinload(DailySummary.housing))
+
+    async def get_enriched_by_id(self, summary_id: UUID) -> Optional[DailySummary]:
+        """Fetch a single summary by id with its housing eager-loaded."""
+        query = self.get_enriched_query().where(DailySummary.id == summary_id)
+        rows = await self.fetch(query)
+        return rows[0] if rows else None
 
     async def delete_by_date_and_housing(self, target_date: date, housing_id: UUID) -> int:
         """Delete all summaries for a (date, housing); returns the count removed."""

@@ -43,7 +43,7 @@ async def test_import_projects_upserts(client, async_test_session):
 
     from src.models import managers
 
-    rows = await managers.WfProjectManager(async_test_session).search(raport_id=raport_id)
+    rows = await managers.ProjectManager(async_test_session).search(raport_id=raport_id)
     assert len(rows) == 1
     assert rows[0].name == "ЖК Импорт"
     assert rows[0].project_class == "Бизнес"
@@ -94,7 +94,7 @@ async def test_import_construction_objects_resolves_parent(client, async_test_se
 
     from src.models import managers
 
-    rows = await managers.WfProjectObjectManager(async_test_session).search(raport_id=co_rid)
+    rows = await managers.ConstructionObjectManager(async_test_session).search(raport_id=co_rid)
     assert len(rows) == 1
     assert rows[0].name == "CO"
 
@@ -227,21 +227,24 @@ async def test_import_sections_and_floors_chain(client, async_test_session):
 
 
 async def test_import_work_catalog_chain(client, async_test_session):
-    group_rid = _id()
+    """work_type («Вид работ») then work («Работа») nested under it."""
     type_rid = _id()
-
-    await client.post(
-        f"{API}/sync/import/work-groups",
-        json={"items": [{"raport_id": group_rid, "name": "Монолит", "code": "MON"}]},
-    )
+    work_rid = _id()
 
     resp = await client.post(
         f"{API}/sync/import/work-types",
+        json={"items": [{"raport_id": type_rid, "name": "Монолит", "code": "MON"}]},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["data"]["upserted"] == 1
+
+    resp = await client.post(
+        f"{API}/sync/import/works",
         json={
             "items": [
                 {
-                    "raport_id": type_rid,
-                    "work_group_raport_id": group_rid,
+                    "raport_id": work_rid,
+                    "work_type_raport_id": type_rid,
                     "name": "Заливка",
                     "code": "POUR",
                     "unit": "м3",
@@ -256,7 +259,11 @@ async def test_import_work_catalog_chain(client, async_test_session):
 
     types = await managers.WorkTypeManager(async_test_session).search(raport_id=type_rid)
     assert len(types) == 1
-    assert types[0].unit == "м3"
+
+    works = await managers.WorkManager(async_test_session).search(raport_id=work_rid)
+    assert len(works) == 1
+    assert works[0].unit == "м3"
+    assert works[0].work_type_id == types[0].id
 
 
 # ---------------------------------------------------------------------------
@@ -405,7 +412,7 @@ async def test_import_all_processes_all_provided_lists(client, async_test_sessio
 
     from src.models import managers
 
-    assert len(await managers.WfProjectObjectManager(async_test_session).search(raport_id=co_rid)) == 1
+    assert len(await managers.ConstructionObjectManager(async_test_session).search(raport_id=co_rid)) == 1
 
 
 async def test_import_all_entities_filter(client, async_test_session):

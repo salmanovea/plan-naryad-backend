@@ -4,53 +4,35 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import Query
-from pydantic import BaseModel, ConfigDict
+from pydantic import ConfigDict
 
 from src.api.schemes import (
     ContractorBaseFilters,
     HousingBaseFilters,
     IDMixinSchema,
-    WorkTypeBaseFilters,
+    WorkBaseFilters,
 )
-from src.models.dbo.tables.fact import FactSource
-
-
-class CreateWorkFactRequest(BaseModel):
-    date: date
-    housing_id: UUID
-    section_id: UUID
-    floor_id: UUID
-    work_type_id: UUID
-    contractor_id: UUID
-    actual_volume: Decimal
-    unit: str
-    submitted_by: Optional[str] = None
-    source: FactSource = FactSource.CONTRACTOR_WEB
-    comment: Optional[str] = None
-
-
-class UpdateWorkFactRequest(BaseModel):
-    actual_volume: Optional[Decimal] = None
-    comment: Optional[str] = None
 
 
 class WorkFactSchema(IDMixinSchema):
     model_config = ConfigDict(from_attributes=True)
 
-    date: date
+    work_date: date
     housing_id: UUID
     section_id: UUID
     floor_id: UUID
-    work_type_id: UUID
-    contractor_id: UUID
-    actual_volume: Decimal
-    unit: str
+    work_id: UUID
+    contractor_id: Optional[UUID] = None
+    percent: Optional[Decimal] = None
+    unit: Optional[str] = None
+    work_cell_contractor_id: Optional[UUID] = None
+    work_cell_id: Optional[UUID] = None
     submitted_by: Optional[str] = None
     source: Optional[str] = None
     comment: Optional[str] = None
     submitted_at: Optional[datetime] = None
 
 
-class WorkFactFilters(HousingBaseFilters, ContractorBaseFilters, WorkTypeBaseFilters):
-    date_from: Optional[date] = Query(None, description="Filter by date from (inclusive)")
-    date_to: Optional[date] = Query(None, description="Filter by date to (inclusive)")
+class WorkFactFilters(HousingBaseFilters, ContractorBaseFilters, WorkBaseFilters):
+    work_date__gte: Optional[date] = Query(None, description="Filter by work date from (inclusive)")
+    work_date__lte: Optional[date] = Query(None, description="Filter by work date to (inclusive)")

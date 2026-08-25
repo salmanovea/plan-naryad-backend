@@ -9,7 +9,6 @@ from src.services.common import BaseService
 class ContractorService(BaseService):
     def __init__(self, db: AsyncSession):
         self.contractor_manager = managers.ContractorManager(db)
-        self.assignment_manager = managers.ContractorAssignmentManager(db)
 
 
 async def get_contractor_service(db: AsyncSession = Depends(get_session)) -> ContractorService:

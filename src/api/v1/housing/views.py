@@ -38,12 +38,20 @@ async def list_housings(
 ) -> ListDataResponseSchema[HousingSchema]:
     filter_data = filters.model_dump(exclude_none=True)
     search_text = filter_data.pop("search", None)
+    project_id = filter_data.pop("project_id", None)
+    if project_id:
+        object_ids = await service.construction_object_ids_of_project(project_id)
+        if not object_ids:
+            return ListDataResponseSchema[HousingSchema].create(list_data=[], pagination=pagination, total=0)
+        filter_data["construction_object_id__in"] = object_ids
+
     items = await service.housing_manager.search(
         search=search_text, order_by=["name"], pagination=pagination, **filter_data
     )
     total = await service.housing_manager.count(search=search_text, **filter_data)
+    enriched = await service.with_queue(items)
     return ListDataResponseSchema[HousingSchema].create(
-        list_data=[HousingSchema.model_validate(i) for i in items],
+        list_data=[HousingSchema.model_validate(i) for i in enriched],
         pagination=pagination,
         total=total,
     )

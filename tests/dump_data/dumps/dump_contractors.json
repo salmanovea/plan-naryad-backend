@@ -6,7 +6,8 @@
     "inn": "1234567890",
     "contact_person": "Иванов И.И.",
     "phone": "+79001234567",
-    "email": "test@stroy.ru"
+    "email": "test@stroy.ru",
+    "raport_id": "40000000-0000-0000-0000-000000000001"
   },
   {
     "id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
@@ -15,6 +16,7 @@
     "inn": null,
     "contact_person": null,
     "phone": null,
-    "email": null
+    "email": null,
+    "raport_id": "40000000-0000-0000-0000-000000000002"
   }
 ]

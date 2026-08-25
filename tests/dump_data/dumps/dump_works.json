@@ -1,0 +1,20 @@
+[
+  {
+    "id": "88888888-8888-8888-8888-888888888888",
+    "name": "Монолит",
+    "code": "MONOLITH",
+    "unit": "м3",
+    "description": null,
+    "work_type_id": "77777777-7777-7777-7777-777777777777",
+    "raport_id": "60000000-0000-0000-0000-000000000001"
+  },
+  {
+    "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+    "name": "Кладка",
+    "code": "MASONRY",
+    "unit": "м2",
+    "description": null,
+    "work_type_id": "77777777-7777-7777-7777-777777777777",
+    "raport_id": "60000000-0000-0000-0000-000000000002"
+  }
+]

@@ -5,8 +5,8 @@ Raport sync service — pulls reference data from Raport and upserts it locally.
 all communication with Raport (auth, requests, pagination) lives in `ReportApi`.
 
 Three sync groups:
-  A  objects — WfProject → WfProjectObject → Housing → Section → Floor
-  B  work_catalog — WorkGroup → WorkType
+  A  objects — Project → Queue → ConstructionObject → Housing → Section → Floor
+  B  work_catalog — WorkSet → WorkGroup → WorkType → Work
   C  contractors — Contractor
 
 Plus payload-driven `import_*` variants that accept Pydantic items instead
@@ -14,6 +14,7 @@ of calling the live Raport API. Used by offline xlsx dumps; same upsert
 logic, same `raport_id` upsert key.
 """
 
+from datetime import date, datetime, timedelta
 from typing import Any, Awaitable, Callable, Iterable
 from uuid import UUID
 
@@ -29,7 +30,7 @@ from src.api.v1.sync.schemes import (
     ImportProjectItem,
     ImportSectionItem,
     ImportUserItem,
-    ImportWorkGroupItem,
+    ImportWorkItem,
     ImportWorkTypeItem,
     SyncEntity,
     SyncImportRequest,
@@ -41,6 +42,7 @@ from src.models import managers
 from src.models.dbo.tables.work import DependencyType
 from src.models.managers.common import BaseManager
 from src.services.common import BaseService
+from src.services.contractor_works import ContractorWorksService, HousingAssignments
 
 log = LoggerProvider().get_logger(__name__)
 
@@ -73,31 +75,58 @@ def _dedupe_by(rows: list[dict], key: str) -> list[dict]:
     return list(seen.values())
 
 
+def _as_date(value: Any) -> date | None:
+    """Raport sends an ISO datetime; the column is a plain date and asyncpg wants a date."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).date()
+    except ValueError:
+        try:
+            return date.fromisoformat(str(value)[:10])
+        except ValueError:
+            return None
+
+
+def _nested_id(payload: Any, *keys: str) -> str | None:
+    """Pull a nested id out of a Raport row, tolerating nulls at any level."""
+    node = payload
+    for key in keys:
+        if not isinstance(node, dict):
+            return None
+        node = node.get(key)
+    return str(node) if node else None
+
+
 class SyncReportService(BaseService):
     def __init__(self, db: AsyncSession):
         self.db = db
         self.report = ReportApi()
-        self.wf_project_manager = managers.WfProjectManager(db)
-        self.wf_project_object_manager = managers.WfProjectObjectManager(db)
+        self.project_manager = managers.ProjectManager(db)
+        self.queue_manager = managers.QueueManager(db)
+        self.construction_object_manager = managers.ConstructionObjectManager(db)
         self.housing_manager = managers.HousingManager(db)
         self.section_manager = managers.SectionManager(db)
         self.floor_manager = managers.FloorManager(db)
+        self.work_set_manager = managers.WorkSetManager(db)
         self.work_group_manager = managers.WorkGroupManager(db)
         self.work_type_manager = managers.WorkTypeManager(db)
+        self.work_manager = managers.WorkManager(db)
         self.contractor_manager = managers.ContractorManager(db)
         self.contract_manager = managers.ContractManager(db)
         self.user_manager = managers.UserManager(db)
-        self.contractor_assignment_manager = managers.ContractorAssignmentManager(db)
         self.tech_sequence_manager = managers.TechSequenceItemManager(db)
+        self.work_fact_manager = managers.WorkFactManager(db)
 
     # ------------------------------------------------------------------
     # Group A — objects hierarchy
     # ------------------------------------------------------------------
 
     async def sync_objects(self, project_raport_id: str | None = None) -> dict[str, int]:
-        """Sync WfProject → WfProjectObject → Housing → Section → Floor from Raport."""
+        """Sync Project → ConstructionObject → Housing → Section → Floor from Raport."""
         counts: dict[str, int] = {
             "projects": 0,
+            "queues": 0,
             "construction_objects": 0,
             "housings": 0,
             "sections": 0,
@@ -125,41 +154,58 @@ class SyncReportService(BaseService):
                 "description": _trim(rp.get("description"), 1000),
                 "project_class": _trim(rp.get("class"), 50) or "Комфорт",
             }
-            await self.wf_project_manager.bulk_upsert(
+            await self.project_manager.bulk_upsert(
                 [project_data],
                 key_field="raport_id",
                 update_fields=["name", "description", "project_class"],
             )
             counts["projects"] += 1
 
-            local_project = await self.wf_project_manager.search(raport_id=rp_id)
+            local_project = await self.project_manager.search(raport_id=rp_id)
             if not local_project:
                 log.warning(f"Project with raport_id={rp_id} not found after upsert, skipping")
                 continue
             local_project_id = local_project[0].id
 
-            # Traverse queues to reach construction objects
+            # Queues are stored now (they are a required filter level), not just traversed.
             queues = await self.report.list_all("list_project_queues", project_id=UUID(rp_id))
             for queue in queues:
                 queue_id = UUID(str(queue["id"]))
+                queue_raport_id = str(queue["id"])
+                await self.queue_manager.bulk_upsert(
+                    [
+                        {
+                            "raport_id": queue_raport_id,
+                            "project_id": local_project_id,
+                            "name": _trim(queue.get("name"), 255) or "",
+                        }
+                    ],
+                    key_field="raport_id",
+                    update_fields=["name", "project_id"],
+                )
+                counts["queues"] += 1
+                local_queue = await self.queue_manager.search(raport_id=queue_raport_id)
+                local_queue_id = local_queue[0].id if local_queue else None
+
                 construction_objects = await self.report.list_all("list_queue_construction_objects", queue_id=queue_id)
                 for co in construction_objects:
                     co_id = str(co["id"])
                     co_data = {
                         "raport_id": co_id,
                         "project_id": local_project_id,
+                        "queue_id": local_queue_id,
                         "name": _trim(co.get("name"), 255) or "",
                         "description": _trim(co.get("description"), 1000),
                         "planned_end_date": co.get("planned_end_date"),
                     }
-                    await self.wf_project_object_manager.bulk_upsert(
+                    await self.construction_object_manager.bulk_upsert(
                         [co_data],
                         key_field="raport_id",
-                        update_fields=["name", "description", "planned_end_date", "project_id"],
+                        update_fields=["name", "description", "planned_end_date", "project_id", "queue_id"],
                     )
                     counts["construction_objects"] += 1
 
-                    local_co = await self.wf_project_object_manager.search(raport_id=co_id)
+                    local_co = await self.construction_object_manager.search(raport_id=co_id)
                     if not local_co:
                         continue
                     local_co_id = local_co[0].id
@@ -244,7 +290,7 @@ class SyncReportService(BaseService):
     # Group B — work catalog
     # ------------------------------------------------------------------
 
-    _WORK_TYPE_BATCH_SIZE = 4000
+    _WORK_BATCH_SIZE = 4000
 
     @staticmethod
     def _default_unit(units: list[dict] | None) -> str:
@@ -257,98 +303,110 @@ class SyncReportService(BaseService):
         return _trim(units[0].get("name"), 20) or "шт"
 
     async def sync_work_catalog(self) -> dict[str, int]:
-        """Sync the work catalog from Raport.
+        """Sync the whole work catalogue from Raport in a single request.
 
-        Terminology (docs/sync-mapping.md §3): the local `work_groups` table
-        («Виды работ») maps to Raport **WorkType**, and the local `work_types`
-        table («Работы») maps to Raport **Work**. Raport WorkGroup/WorkSet are
-        only traversed to reach work-types, never stored.
+        `GET /api/v1/works/structure` returns the complete tree flat, one row per node,
+        with `level` numbering it: 0 = work_set, 1 = work_group, 2 = work_type, 3 = work
+        (the leaf, the only level carrying units). `parent_id` links a node to the level
+        above. That replaces the old nested traversal, which issued one request per
+        Raport work-group and stored only two of the four levels.
 
-        Traversal: Raport work-groups → work-types (→ local WorkGroup) → works
-        (→ local WorkType).
-
-        The same Raport WorkType is listed under several Raport WorkGroups (and
-        pagination can repeat items). Rows are accumulated across the whole
-        traversal and deduped by `raport_id` up front, before the full list is
-        handed to `bulk_upsert`, which writes it in batches. Deduping the whole
-        list (rather than each batch) guarantees no single `ON CONFLICT
-        (raport_id)` statement contains the same `raport_id` twice. `code` mirrors
-        `raport_id` (both hold the Raport UUID, which fits without truncation), so
-        deduping by `raport_id` also makes `code` unique — no separate pass needed.
+        Names now line up with Raport one-to-one (decision Р6b), so no level shifting
+        happens here any more.
         """
-        counts: dict[str, int] = {"work_groups": 0, "work_types": 0}
+        counts: dict[str, int] = {"work_sets": 0, "work_groups": 0, "work_types": 0, "works": 0}
 
-        raport_work_groups = await self.report.list_all("list_work_groups")
-        log.info("sync_work_catalog: fetched %d Raport work-groups to traverse", len(raport_work_groups))
+        response = await self.report.get_works_structure()
+        nodes = response.get("data") or []
+        log.info("sync_work_catalog: fetched %d catalogue nodes", len(nodes))
 
-        wg_rows: list[dict] = []
-        for idx, rwg in enumerate(raport_work_groups, start=1):
-            rwg_id = UUID(str(rwg["id"]))
-            raport_work_types = await self.report.list_all("list_work_group_work_types", work_group_id=rwg_id)
-            for rwt in raport_work_types:
-                rwt_id = str(rwt["id"])
-                wg_rows.append(
-                    {
-                        "raport_id": rwt_id,
-                        "name": _trim(rwt.get("name"), 255) or "",
-                        "code": rwt_id[:50],
-                    }
-                )
-            if idx % 25 == 0 or idx == len(raport_work_groups):
-                log.info(
-                    "sync_work_catalog: traversed %d/%d Raport work-groups, %d work-type rows collected",
-                    idx,
-                    len(raport_work_groups),
-                    len(wg_rows),
-                )
+        by_level: dict[int, list[dict]] = {0: [], 1: [], 2: [], 3: []}
+        for node in nodes:
+            level = node.get("level")
+            if level in by_level:
+                by_level[level].append(node)
 
-        wg_rows = _dedupe_by(wg_rows, "raport_id")
-        if wg_rows:
+        # Level 0 — work sets. No parent.
+        set_rows = _dedupe_by(
+            [
+                {
+                    "raport_id": str(n["id"]),
+                    "name": _trim(n.get("title"), 255) or "",
+                    "code": str(n["id"])[:100],
+                }
+                for n in by_level[0]
+            ],
+            "raport_id",
+        )
+        if set_rows:
+            await self.work_set_manager.bulk_upsert(set_rows, key_field="code", update_fields=["name", "raport_id"])
+        counts["work_sets"] = len(set_rows)
+        set_map = await self._resolve_parents(self.work_set_manager, (r["raport_id"] for r in set_rows))
+
+        # Levels 1..3 — each resolves its parent through the level above.
+        group_rows = _dedupe_by(
+            [
+                {
+                    "raport_id": str(n["id"]),
+                    "work_set_id": set_map.get(str(n.get("parent_id"))),
+                    "name": _trim(n.get("title"), 255) or "",
+                    "code": str(n["id"])[:100],
+                }
+                for n in by_level[1]
+            ],
+            "raport_id",
+        )
+        if group_rows:
             await self.work_group_manager.bulk_upsert(
-                wg_rows,
-                key_field="code",
-                update_fields=["name", "raport_id"],
+                group_rows, key_field="code", update_fields=["name", "work_set_id", "raport_id"]
             )
-        counts["work_groups"] = len(wg_rows)
-        log.info("sync_work_catalog: upserted %d local work_groups", counts["work_groups"])
+        counts["work_groups"] = len(group_rows)
+        group_map = await self._resolve_parents(self.work_group_manager, (r["raport_id"] for r in group_rows))
 
-        wg_map = await self._resolve_parents(self.work_group_manager, (r["raport_id"] for r in wg_rows))
-
-        wt_rows: list[dict] = []
-        processed = 0
-        for rwt_id, local_wg_id in wg_map.items():
-            works = await self.report.list_all("list_work_type_works", work_type_id=UUID(rwt_id))
-            for w in works:
-                w_id = str(w["id"])
-                wt_rows.append(
-                    {
-                        "raport_id": w_id,
-                        "group_id": local_wg_id,
-                        "name": _trim(w.get("name"), 255) or "",
-                        "code": w_id[:100],
-                        "unit": self._default_unit(w.get("units")),
-                        "description": None,
-                    }
-                )
-            processed += 1
-            if processed % 50 == 0 or processed == len(wg_map):
-                log.info(
-                    "sync_work_catalog: fetched works for %d/%d work-groups, %d work rows collected",
-                    processed,
-                    len(wg_map),
-                    len(wt_rows),
-                )
-
-        wt_rows = _dedupe_by(wt_rows, "raport_id")
-        if wt_rows:
+        type_rows = _dedupe_by(
+            [
+                {
+                    "raport_id": str(n["id"]),
+                    "work_group_id": group_map.get(str(n.get("parent_id"))),
+                    "name": _trim(n.get("title"), 255) or "",
+                    "code": str(n["id"])[:50],
+                }
+                for n in by_level[2]
+            ],
+            "raport_id",
+        )
+        if type_rows:
             await self.work_type_manager.bulk_upsert(
-                wt_rows,
-                key_field="code",
-                update_fields=["name", "unit", "description", "group_id", "raport_id"],
-                batch_size=self._WORK_TYPE_BATCH_SIZE,
+                type_rows, key_field="code", update_fields=["name", "work_group_id", "raport_id"]
             )
-        counts["work_types"] = len(wt_rows)
-        log.info("sync_work_catalog: upserted %d local work_types", counts["work_types"])
+        counts["work_types"] = len(type_rows)
+        type_map = await self._resolve_parents(self.work_type_manager, (r["raport_id"] for r in type_rows))
+
+        work_rows = []
+        for n in by_level[3]:
+            parent = type_map.get(str(n.get("parent_id")))
+            if parent is None:
+                continue
+            work_rows.append(
+                {
+                    "raport_id": str(n["id"]),
+                    "work_type_id": parent,
+                    "name": _trim(n.get("title"), 255) or "",
+                    "code": str(n["id"])[:100],
+                    "unit": self._default_unit(n.get("units")),
+                    "description": None,
+                }
+            )
+        work_rows = _dedupe_by(work_rows, "raport_id")
+        if work_rows:
+            await self.work_manager.bulk_upsert(
+                work_rows,
+                key_field="code",
+                update_fields=["name", "unit", "description", "work_type_id", "raport_id"],
+                batch_size=self._WORK_BATCH_SIZE,
+            )
+        counts["works"] = len(work_rows)
+        log.info("sync_work_catalog: upserted %s", counts)
 
         return counts
 
@@ -425,6 +483,172 @@ class SyncReportService(BaseService):
     # ------------------------------------------------------------------
     # Group E — users
     # ------------------------------------------------------------------
+    # Group G — work facts (mirrored from Raport, never authored locally)
+    # ------------------------------------------------------------------
+
+    _FACT_BATCH_SIZE = 2000
+    _FACT_PER_PAGE = 200
+
+    async def sync_work_facts(
+        self,
+        housing_raport_id: str,
+        date_from: date | None = None,
+        date_to: date | None = None,
+    ) -> dict[str, int]:
+        """Pull one housing's facts from Raport for a date window.
+
+        Facts are entered in Raport only (spec: creating them here is out of scope), so this
+        is a one-way mirror keyed by `raport_id` (Raport's `work_fact.id`).
+
+        Raport leaves `contractor` empty on virtually every fact — 0 of 56 365 on the
+        reference housing — so the contractor is resolved from the cell's assignment
+        (`/contractor-works`), which covers 99.5% of cells. Facts on a cell shared by several
+        contractors are stored without one rather than attributed by guesswork.
+
+        Without a window the default is yesterday and today, which is what the nightly run
+        needs; a full re-pull is done by passing an explicit range.
+        """
+        local = await self.housing_manager.search(raport_id=housing_raport_id)
+        if not local:
+            return {"work_facts": 0, "skipped": 0, "without_contractor": 0}
+        housing_id = local[0].id
+
+        if date_from is None and date_to is None:
+            date_to = date.today()
+            date_from = date_to - timedelta(days=1)
+
+        rows_src = await self._fetch_work_facts(housing_raport_id, date_from, date_to)
+        if not rows_src:
+            return {"work_facts": 0, "skipped": 0, "without_contractor": 0}
+
+        section_map = await self._reverse_raport_map(self.section_manager, housing_id=housing_id)
+        floor_map = await self._floor_raport_map(housing_id)
+        work_map = await self._resolve_parents(self.work_manager, (_nested_id(r, "work", "id") or "" for r in rows_src))
+
+        assignments = await ContractorWorksService(self.db, report=self.report).get_housing_assignments(housing_id)
+
+        rows: list[dict] = []
+        skipped = 0
+        without_contractor = 0
+        for src in rows_src:
+            section_id = section_map.get(_nested_id(src, "section", "id") or "")
+            floor_id = floor_map.get(_nested_id(src, "floor", "id") or "")
+            work_id = work_map.get(_nested_id(src, "work", "id") or "")
+            if not section_id or not floor_id or not work_id:
+                skipped += 1
+                continue
+
+            contractor_id = await self._resolve_fact_contractor(src, section_id, floor_id, work_id, assignments)
+            if contractor_id is None:
+                without_contractor += 1
+
+            work_date = _as_date(src.get("work_date"))
+            rows.append(
+                {
+                    "raport_id": str(src["id"]),
+                    "work_date": work_date,
+                    "housing_id": housing_id,
+                    "section_id": section_id,
+                    "floor_id": floor_id,
+                    "work_id": work_id,
+                    "contractor_id": contractor_id,
+                    "volume": src.get("volume") or 0,
+                    "percent": src.get("percent"),
+                    "unit": _trim((src.get("unit") or {}).get("name"), 20),
+                    "work_cell_id": src.get("work_cell_id"),
+                    "work_cell_contractor_id": src.get("work_cell_contractor_id"),
+                    "submitted_by": _trim((src.get("user") or {}).get("shown_name"), 255),
+                    "source": "raport",
+                }
+            )
+
+        rows = [r for r in _dedupe_by(rows, "raport_id") if r["work_date"]]
+        if rows:
+            await self.work_fact_manager.bulk_upsert(
+                rows,
+                key_field="raport_id",
+                update_fields=[
+                    "work_date",
+                    "housing_id",
+                    "section_id",
+                    "floor_id",
+                    "work_id",
+                    "contractor_id",
+                    "volume",
+                    "percent",
+                    "unit",
+                    "work_cell_id",
+                    "work_cell_contractor_id",
+                    "submitted_by",
+                    "source",
+                ],
+                batch_size=self._FACT_BATCH_SIZE,
+            )
+
+        result = {"work_facts": len(rows), "skipped": skipped, "without_contractor": without_contractor}
+        log.info("sync_work_facts: housing %s (%s..%s) — %s", housing_raport_id, date_from, date_to, result)
+        return result
+
+    async def _fetch_work_facts(
+        self,
+        housing_raport_id: str,
+        date_from: date | None,
+        date_to: date | None,
+    ) -> list[dict]:
+        """Walk every page of `/work-facts` for a housing and window."""
+        params: dict[str, Any] = {"housing_id": housing_raport_id}
+        if date_from:
+            params["work_date__gte"] = str(date_from)
+        if date_to:
+            params["work_date__lte"] = str(date_to)
+
+        rows: list[dict] = []
+        page = 1
+        while True:
+            try:
+                response = await self.report.list_work_facts(page=page, per_page=self._FACT_PER_PAGE, **params)
+            except Exception as err:
+                log.error("sync_work_facts: read failed on page %d: %s", page, err)
+                break
+            items = (response or {}).get("data") or []
+            rows.extend(items)
+            next_page = ((response or {}).get("pagination") or {}).get("next_page")
+            if not next_page or not items:
+                break
+            page = next_page
+        return rows
+
+    @staticmethod
+    async def _resolve_fact_contractor(
+        src: dict,
+        section_id: UUID,
+        floor_id: UUID,
+        work_id: UUID,
+        assignments: "HousingAssignments",
+    ) -> UUID | None:
+        """Raport's own contractor first, the cell's sole assignee second, else nothing."""
+        raport_contractor = _nested_id(src, "contractor", "id")
+        if raport_contractor:
+            # Raport named the contractor itself; trust it when it resolves locally.
+            for candidate in assignments.contractors_for(section_id, floor_id, work_id):
+                return candidate
+        return assignments.single_contractor_for(section_id, floor_id, work_id)
+
+    async def _reverse_raport_map(self, manager: BaseManager, **filters: Any) -> dict[str, UUID]:
+        """{raport_id: local id} for a filtered table."""
+        rows = await manager.search(**filters)
+        return {row.raport_id: row.id for row in rows if getattr(row, "raport_id", None)}
+
+    async def _floor_raport_map(self, housing_id: UUID) -> dict[str, UUID]:
+        """{floor raport_id: local id} for every floor of a housing."""
+        sections = await self.section_manager.search(housing_id=housing_id)
+        section_ids = [s.id for s in sections]
+        if not section_ids:
+            return {}
+        floors = await self.floor_manager.search(section_id__in=section_ids)
+        return {f.raport_id: f.id for f in floors if f.raport_id}
+
+    # ------------------------------------------------------------------
 
     @staticmethod
     def _user_row(u: dict) -> dict:
@@ -469,117 +693,32 @@ class SyncReportService(BaseService):
         return {"users": len(rows)}
 
     # ------------------------------------------------------------------
-    # Group F — contractor assignments (aggregated from Raport)
-    # ------------------------------------------------------------------
-
-    # 7 columns per row (incl. generated id); keep rows × columns under
-    # asyncpg's 32767 bind-param cap.
-    _ASSIGNMENT_BATCH_SIZE = 4000
-
-    async def sync_assignments(self, housing_raport_id: str | None = None) -> dict[str, int]:
-        """Sync contractor assignments from the aggregated Raport endpoint.
-
-        Terminology (docs/sync-mapping.md §3+§4.2): the aggregate groups by
-        Raport WorkGroup and lists Raport WorkTypes; each Raport WorkType is a
-        *local* WorkGroup. So one aggregate row is exploded into one local
-        `ContractorAssignment` per work-type, keyed by the composite
-        `(contractor_id, housing_id, section_id, work_group_id)`. `work_type_ids`
-        is left empty (the contractor covers the whole work-group).
-
-        Reconciliation is snapshot-based and scoped: pass `housing_raport_id` to
-        sync one housing (its `source="raport"` rows absent from the response are
-        deleted); omit it for a full sync. Rows with `source="manual"` are never
-        touched.
-        """
-        params: dict[str, Any] = {}
-        local_scope_housing_id: UUID | None = None
-        if housing_raport_id:
-            params["housing_id"] = housing_raport_id
-            scope_local = await self.housing_manager.search(raport_id=housing_raport_id)
-            if not scope_local:
-                return {"assignments": 0, "deleted": 0, "skipped": 0}
-            local_scope_housing_id = scope_local[0].id
-
-        rows_src = await self.report.list_all("list_assignments_aggregated", **params)
-
-        contractor_map = await self._resolve_parents(
-            self.contractor_manager, (r["contractor"]["id"] for r in rows_src if r.get("contractor"))
-        )
-        housing_map = await self._resolve_parents(
-            self.housing_manager, (r["housing"]["id"] for r in rows_src if r.get("housing"))
-        )
-        section_map = await self._resolve_parents(
-            self.section_manager, (r["section"]["id"] for r in rows_src if r.get("section"))
-        )
-        work_group_map = await self._resolve_parents(
-            self.work_group_manager,
-            (wt["id"] for r in rows_src for wt in (r.get("work_types") or []) if wt.get("id")),
-        )
-
-        desired: dict[tuple, dict] = {}
-        skipped = 0
-        for r in rows_src:
-            contractor_id = contractor_map.get(str(r["contractor"]["id"])) if r.get("contractor") else None
-            housing_id = housing_map.get(str(r["housing"]["id"])) if r.get("housing") else None
-            section_id = section_map.get(str(r["section"]["id"])) if r.get("section") else None
-            if not contractor_id or not housing_id:
-                skipped += 1
-                continue
-            for wt in r.get("work_types") or []:
-                work_group_id = work_group_map.get(str(wt["id"]))
-                if not work_group_id:
-                    skipped += 1
-                    continue
-                key = (contractor_id, housing_id, section_id, work_group_id)
-                desired[key] = {
-                    "contractor_id": contractor_id,
-                    "housing_id": housing_id,
-                    "section_id": section_id,
-                    "work_group_id": work_group_id,
-                    "work_type_ids": [],
-                    "source": "raport",
-                }
-
-        if desired:
-            await self.contractor_assignment_manager.bulk_upsert(
-                list(desired.values()),
-                key_field=["contractor_id", "housing_id", "section_id", "work_group_id"],
-                update_fields=["work_type_ids", "source"],
-                batch_size=self._ASSIGNMENT_BATCH_SIZE,
-            )
-
-        deleted = await self._delete_stale_assignments(set(desired), local_scope_housing_id)
-        return {"assignments": len(desired), "deleted": deleted, "skipped": skipped}
-
-    async def _delete_stale_assignments(self, fresh_keys: set[tuple], scope_housing_id: UUID | None) -> int:
-        """Delete `source="raport"` assignments (within scope) absent from the snapshot."""
-        filters: dict[str, Any] = {"source": "raport"}
-        if scope_housing_id is not None:
-            filters["housing_id"] = scope_housing_id
-        existing = await self.contractor_assignment_manager.search(**filters)
-        stale_ids = [
-            a.id for a in existing if (a.contractor_id, a.housing_id, a.section_id, a.work_group_id) not in fresh_keys
-        ]
-        if stale_ids:
-            await self.contractor_assignment_manager.bulk_delete_by_batch(stale_ids)
-            await self.db.commit()
-        return len(stale_ids)
-
-    # ------------------------------------------------------------------
-    # Group G — technological sequence (from a plan's links[])
-    # ------------------------------------------------------------------
-
-    # 11 columns per row (incl. generated id); stay under asyncpg's 32767 cap.
     _TECH_SEQUENCE_BATCH_SIZE = 2000
 
-    async def _load_plan_structure(self, housing_raport_id: str) -> tuple[dict, str | None]:
-        """Return (plan, source_kind) for a housing: its calendar plan if one
-        exists, otherwise the default plan-template. `plan` has `data` (tasks)
-        and `links` (predecessor edges)."""
-        check = await self.report.check_calendar_plan(housing_id=housing_raport_id)
+    async def _load_plan_structure(
+        self,
+        housing_raport_id: str,
+        section_raport_id: str | None = None,
+    ) -> tuple[dict, str | None]:
+        """Return (plan, source_kind) for a housing or one of its sections.
+
+        Raport builds calendar plans at both scopes, so the lookup is scoped too: with
+        `section_raport_id` it asks for that section's plan and gives up if there is none
+        (the housing-wide plan already covers the section). Without it, it falls back to
+        the default plan-template.
+
+        `plan` carries `data` (tasks) and `links` (predecessor edges).
+        """
+        params = {"housing_id": housing_raport_id}
+        if section_raport_id:
+            params["section_id"] = section_raport_id
+        check = await self.report.check_calendar_plan(**params)
         if check.get("is_exists") and check.get("data"):
             cp = await self.report.get_calendar_plan(str(check["data"][0]["id"]))
             return (cp.get("plan") or {}, "calendar")
+
+        if section_raport_id:
+            return ({}, None)
 
         templates = await self.report.list_plan_templates(is_default="true", per_page=1)
         tdata = templates.get("data") or []
@@ -589,88 +728,166 @@ class SyncReportService(BaseService):
         return (tpl.get("plan") or {}, "template")
 
     async def sync_tech_sequence(self, housing_raport_id: str) -> dict[str, int]:
-        """Sync the technological sequence for one housing from Raport.
+        """Sync the technological sequences of one housing from Raport.
 
-        Source: the housing's calendar plan if it exists, else the default
-        plan-template (docs/sync-mapping.md §4.1). Plan tasks map to local
-        WorkTypes via `task.work.id` (Raport Work); `plan.links[]` (source→target
-        task edges) become `depends_on` at the work-type level. Volumes are not
-        in Raport — they are set to 0 on insert and left untouched on re-sync so
-        manual edits survive. Keyed by `(housing_id, work_type_id)`; `source="raport"`
-        rows absent from the new snapshot are deleted.
+        Two scopes are pulled: the housing-wide calendar plan (falling back to the default
+        plan-template), and a plan per section for those sections that have their own — in
+        the dev database 11 of 19 plans are section-scoped. Section rows carry `section_id`
+        and override the housing-wide rows for that section during generation.
+
+        The sequence is a graph: `plan.links[]` edges become `depends_on` (finish-to-start)
+        and `depends_on_ss` (start-to-start) depending on the link type. Volumes are absent
+        in Raport — set to 0 on insert and left alone on re-sync so manual edits survive.
+        Keyed by `(housing_id, section_id, work_id)`; `source="raport"` rows absent from the
+        fresh snapshot are deleted within their own scope.
         """
         local = await self.housing_manager.search(raport_id=housing_raport_id)
         if not local:
             return {"tech_sequence": 0, "deleted": 0, "skipped": 0}
         housing_id = local[0].id
 
+        totals = {"tech_sequence": 0, "deleted": 0, "skipped": 0}
+
         plan, _ = await self._load_plan_structure(housing_raport_id)
+        await self._store_sequence_scope(plan, housing_id, None, totals)
+
+        for section in await self.section_manager.search(housing_id=housing_id):
+            if not section.raport_id:
+                continue
+            section_plan, kind = await self._load_plan_structure(housing_raport_id, section.raport_id)
+            if kind is None:
+                continue
+            await self._store_sequence_scope(section_plan, housing_id, section.id, totals)
+
+        return totals
+
+    async def _store_sequence_scope(
+        self,
+        plan: dict,
+        housing_id: UUID,
+        section_id: UUID | None,
+        totals: dict[str, int],
+    ) -> None:
+        """Upsert one scope's sequence rows and drop the stale ones in that same scope."""
+        rows, skipped = await self._build_sequence_rows(plan, housing_id, section_id)
+        totals["skipped"] += skipped
+        if rows:
+            await self.tech_sequence_manager.bulk_upsert(
+                rows,
+                key_field=["housing_id", "section_id", "work_id"],
+                # volumes are intentionally excluded so manual edits survive a re-sync
+                update_fields=[
+                    "order",
+                    "depends_on",
+                    "depends_on_ss",
+                    "lag_days",
+                    "planning_type",
+                    "floor_sorting_direction",
+                    "lag_between_floors",
+                    "estimated_days",
+                    "source",
+                ],
+                batch_size=self._TECH_SEQUENCE_BATCH_SIZE,
+            )
+        totals["tech_sequence"] += len(rows)
+        totals["deleted"] += await self._delete_stale_tech_sequence(
+            housing_id, section_id, {r["work_id"] for r in rows}
+        )
+
+    async def _build_sequence_rows(
+        self,
+        plan: dict,
+        housing_id: UUID,
+        section_id: UUID | None,
+    ) -> tuple[list[dict], int]:
+        """Turn a Raport plan into sequence rows for one scope.
+
+        The same work can appear as several plan tasks (for instance once per floor); rows
+        are merged per work, taking the earliest order, the longest duration and the union
+        of predecessors.
+        """
         tasks = plan.get("data") or []
         links = plan.get("links") or []
 
-        # task.work.id (Raport Work) → local WorkType
-        work_ids = {str(t["work"]["id"]) for t in tasks if t.get("work") and t["work"].get("id")}
-        wt_map = await self._resolve_parents(self.work_type_manager, work_ids)
-        task_wt: dict[str, UUID] = {}
+        work_raport_ids = {str(t["work"]["id"]) for t in tasks if t.get("work") and t["work"].get("id")}
+        work_map = await self._resolve_parents(self.work_manager, work_raport_ids)
+
+        task_work: dict[str, UUID] = {}
         for t in tasks:
-            w = t.get("work") or {}
-            wid = str(w["id"]) if w.get("id") else None
-            if wid and wid in wt_map:
-                task_wt[str(t["id"])] = wt_map[wid]
+            work = t.get("work") or {}
+            raport_id = str(work["id"]) if work.get("id") else None
+            if raport_id and raport_id in work_map:
+                task_work[str(t["id"])] = work_map[raport_id]
 
-        # predecessors per task → predecessor work-type ids
-        preds: dict[str, set[str]] = {}
+        # Predecessors, split by link type. Raport sends dhtmlx codes: "1" is start-to-start,
+        # everything else is treated as finish-to-start.
+        preds_fs: dict[str, set[str]] = {}
+        preds_ss: dict[str, set[str]] = {}
         for link in links:
-            src, tgt = str(link.get("source")), str(link.get("target"))
-            if src in task_wt and tgt in task_wt:
-                preds.setdefault(tgt, set()).add(str(task_wt[src]))
+            source, target = str(link.get("source")), str(link.get("target"))
+            if source not in task_work or target not in task_work:
+                continue
+            bucket = (
+                preds_ss if DependencyType.from_dhtmlx(link.get("type")) is DependencyType.START_TO_START else preds_fs
+            )
+            bucket.setdefault(target, set()).add(str(task_work[source]))
 
-        rows_by_wt: dict[UUID, dict] = {}
+        rows_by_work: dict[UUID, dict] = {}
         skipped = 0
         for t in tasks:
-            tid = str(t["id"])
-            wt = task_wt.get(tid)
-            if not wt:
+            task_id = str(t["id"])
+            work_id = task_work.get(task_id)
+            if not work_id:
                 skipped += 1
                 continue
+
             order = int(t.get("line_number") or 0)
             duration = int(t.get("duration") or 0)
-            deps = {d for d in preds.get(tid, set()) if d != str(wt)}
-            row = rows_by_wt.get(wt)
+            own = str(work_id)
+            deps_fs = {d for d in preds_fs.get(task_id, set()) if d != own}
+            deps_ss = {d for d in preds_ss.get(task_id, set()) if d != own}
+
+            row = rows_by_work.get(work_id)
             if row:
                 row["order"] = min(row["order"], order)
-                row["depends_on"] = sorted(set(row["depends_on"]) | deps)
+                row["depends_on"] = sorted(set(row["depends_on"]) | deps_fs)
+                row["depends_on_ss"] = sorted(set(row["depends_on_ss"]) | deps_ss)
                 row["estimated_days"] = max(row["estimated_days"], duration)
-            else:
-                rows_by_wt[wt] = {
-                    "housing_id": housing_id,
-                    "work_type_id": wt,
-                    "order": order,
-                    "depends_on": sorted(deps),
-                    "dependency_type": DependencyType.FINISH_TO_START.value,
-                    "lag_days": int(t.get("lag") or 0),
-                    "estimated_days": duration,
-                    "daily_norm_volume": 0,
-                    "total_volume": 0,
-                    "source": "raport",
-                }
+                continue
 
-        if rows_by_wt:
-            await self.tech_sequence_manager.bulk_upsert(
-                list(rows_by_wt.values()),
-                key_field=["housing_id", "work_type_id"],
-                # volumes are intentionally excluded so manual edits survive a re-sync
-                update_fields=["order", "depends_on", "dependency_type", "lag_days", "estimated_days", "source"],
-                batch_size=self._TECH_SEQUENCE_BATCH_SIZE,
-            )
+            rows_by_work[work_id] = {
+                "housing_id": housing_id,
+                "section_id": section_id,
+                "work_id": work_id,
+                "order": order,
+                "depends_on": sorted(deps_fs),
+                "depends_on_ss": sorted(deps_ss),
+                "lag_days": int(t.get("lag") or 0),
+                # How the work travels through floors (Р6a) — the generator needs these.
+                "planning_type": _trim(t.get("planning_type"), 20),
+                "floor_sorting_direction": _trim(t.get("floor_sorting_direction"), 4),
+                "lag_between_floors": t.get("lag_between_floors"),
+                "estimated_days": duration,
+                "daily_norm_volume": 0,
+                "total_volume": 0,
+                "source": "raport",
+            }
 
-        deleted = await self._delete_stale_tech_sequence(housing_id, set(rows_by_wt))
-        return {"tech_sequence": len(rows_by_wt), "deleted": deleted, "skipped": skipped}
+        return list(rows_by_work.values()), skipped
 
-    async def _delete_stale_tech_sequence(self, housing_id: UUID, fresh_work_type_ids: set[UUID]) -> int:
-        """Delete `source="raport"` sequence rows for a housing absent from the snapshot."""
-        existing = await self.tech_sequence_manager.search(housing_id=housing_id, source="raport")
-        stale_ids = [r.id for r in existing if r.work_type_id not in fresh_work_type_ids]
+    async def _delete_stale_tech_sequence(
+        self,
+        housing_id: UUID,
+        section_id: UUID | None,
+        fresh_work_ids: set[UUID],
+    ) -> int:
+        """Delete `source="raport"` rows of one scope that the fresh snapshot dropped."""
+        filters: dict = {"housing_id": housing_id, "source": "raport"}
+        filters["section_id"] = section_id if section_id else None
+        existing = await self.tech_sequence_manager.search(**filters)
+        stale_ids: list[int | UUID] = [
+            r.id for r in existing if r.work_id not in fresh_work_ids and r.section_id == section_id
+        ]
         if stale_ids:
             await self.tech_sequence_manager.bulk_delete_by_batch(stale_ids)
             await self.db.commit()
@@ -714,8 +931,6 @@ class SyncReportService(BaseService):
             steps.append(("objects", self.sync_objects))
         if selected & self._CATALOG_ENTITIES:
             steps.append(("work_catalog", self.sync_work_catalog))
-        if SyncEntity.ASSIGNMENTS in selected:
-            steps.append(("assignments", self.sync_assignments))
         if SyncEntity.TECH_SEQUENCE in selected:
             steps.append(("tech_sequence", self._sync_tech_sequence_all))
 
@@ -774,8 +989,8 @@ class SyncReportService(BaseService):
             (SyncEntity.HOUSINGS, payload.housings, self.import_housings),
             (SyncEntity.SECTIONS, payload.sections, self.import_sections),
             (SyncEntity.FLOORS, payload.floors, self.import_floors),
-            (SyncEntity.WORK_KINDS, payload.work_kinds, self.import_work_groups),
-            (SyncEntity.WORKS, payload.works, self.import_work_types),
+            (SyncEntity.WORK_KINDS, payload.work_kinds, self.import_work_types),
+            (SyncEntity.WORKS, payload.works, self.import_works),
         ]
         result: dict[str, dict] = {}
         for entity, items, handler in plan:
@@ -818,7 +1033,7 @@ class SyncReportService(BaseService):
         ]
         rows = _dedupe_by(rows, "raport_id")
         if rows:
-            await self.wf_project_manager.bulk_upsert(
+            await self.project_manager.bulk_upsert(
                 rows,
                 key_field="raport_id",
                 update_fields=["name", "project_class", "description"],
@@ -826,7 +1041,7 @@ class SyncReportService(BaseService):
         return {"received": len(items), "upserted": len(rows), "missing_parents": 0}
 
     async def import_construction_objects(self, items: list[ImportConstructionObjectItem]) -> dict[str, int]:
-        parent_map = await self._resolve_parents(self.wf_project_manager, (i.project_raport_id for i in items))
+        parent_map = await self._resolve_parents(self.project_manager, (i.project_raport_id for i in items))
         rows = []
         missing = 0
         for i in items:
@@ -845,7 +1060,7 @@ class SyncReportService(BaseService):
             )
         rows = _dedupe_by(rows, "raport_id")
         if rows:
-            await self.wf_project_object_manager.bulk_upsert(
+            await self.construction_object_manager.bulk_upsert(
                 rows,
                 key_field="raport_id",
                 update_fields=["name", "description", "planned_end_date", "project_id"],
@@ -854,7 +1069,7 @@ class SyncReportService(BaseService):
 
     async def import_housings(self, items: list[ImportHousingItem]) -> dict[str, int]:
         parent_map = await self._resolve_parents(
-            self.wf_project_object_manager,
+            self.construction_object_manager,
             (i.construction_object_raport_id for i in items if i.construction_object_raport_id),
         )
         rows = []
@@ -938,10 +1153,14 @@ class SyncReportService(BaseService):
             )
         return {"received": len(items), "upserted": len(rows), "missing_parents": missing}
 
-    async def import_work_groups(self, items: list[ImportWorkGroupItem]) -> dict[str, int]:
+    async def import_work_types(self, items: list[ImportWorkTypeItem]) -> dict[str, int]:
+        parent_map = await self._resolve_parents(
+            self.work_group_manager, (i.work_group_raport_id for i in items if i.work_group_raport_id)
+        )
         rows = [
             {
                 "raport_id": i.raport_id,
+                "work_group_id": parent_map.get(i.work_group_raport_id) if i.work_group_raport_id else None,
                 "name": _trim(i.name, 255) or "",
                 "code": _trim(i.code, 50) or i.raport_id[:50],
                 "description": _trim(i.description, 1000),
@@ -950,26 +1169,26 @@ class SyncReportService(BaseService):
         ]
         rows = _dedupe_by(rows, "raport_id")
         if rows:
-            await self.work_group_manager.bulk_upsert(
+            await self.work_type_manager.bulk_upsert(
                 rows,
                 key_field="raport_id",
-                update_fields=["name", "code", "description"],
+                update_fields=["name", "code", "description", "work_group_id"],
             )
         return {"received": len(items), "upserted": len(rows), "missing_parents": 0}
 
-    async def import_work_types(self, items: list[ImportWorkTypeItem]) -> dict[str, int]:
-        parent_map = await self._resolve_parents(self.work_group_manager, (i.work_group_raport_id for i in items))
+    async def import_works(self, items: list[ImportWorkItem]) -> dict[str, int]:
+        parent_map = await self._resolve_parents(self.work_type_manager, (i.work_type_raport_id for i in items))
         rows = []
         missing = 0
         for i in items:
-            group_id = parent_map.get(i.work_group_raport_id)
-            if group_id is None:
+            work_type_id = parent_map.get(i.work_type_raport_id)
+            if work_type_id is None:
                 missing += 1
                 continue
             rows.append(
                 {
                     "raport_id": i.raport_id,
-                    "group_id": group_id,
+                    "work_type_id": work_type_id,
                     "name": _trim(i.name, 255) or "",
                     "code": _trim(i.code, 100) or i.raport_id[:100],
                     "unit": _trim(i.unit, 20) or "шт",
@@ -978,11 +1197,11 @@ class SyncReportService(BaseService):
             )
         rows = _dedupe_by(rows, "raport_id")
         if rows:
-            await self.work_type_manager.bulk_upsert(
+            await self.work_manager.bulk_upsert(
                 rows,
                 key_field="raport_id",
-                update_fields=["name", "code", "unit", "description", "group_id"],
-                batch_size=self._WORK_TYPE_BATCH_SIZE,
+                update_fields=["name", "code", "unit", "description", "work_type_id"],
+                batch_size=self._WORK_BATCH_SIZE,
             )
         return {"received": len(items), "upserted": len(rows), "missing_parents": missing}
 

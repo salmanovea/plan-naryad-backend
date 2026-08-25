@@ -118,7 +118,7 @@ class AlertService(BaseService):
             p.contractor_id for p in await self.plan_item_manager.search(housing_id=housing_id, date=alert_date)
         }
         submitted_contractors_ids = {
-            f.contractor_id for f in await self.work_fact_manager.search(housing_id=housing_id, date=alert_date)
+            f.contractor_id for f in await self.work_fact_manager.search(housing_id=housing_id, work_date=alert_date)
         }
 
         for contractor_id in planned_contractors_ids:
@@ -180,7 +180,8 @@ class AlertService(BaseService):
         housing = await self.housing_manager.get_by_id(housing_id)
         by_contractor: Dict[UUID, List] = {}
         for item in critical_items:
-            by_contractor.setdefault(item.contractor_id, []).append(item)
+            if item.contractor_id:
+                by_contractor.setdefault(item.contractor_id, []).append(item)
 
         for contractor_id, items in by_contractor.items():
             contractor = await self.contractor_manager.get_by_id(contractor_id)
@@ -216,6 +217,8 @@ class AlertService(BaseService):
         )
 
         for item in pattern_items:
+            if not item.contractor_id:
+                continue
             contractor = await self.contractor_manager.get_by_id(item.contractor_id)
             if contractor:
                 pattern_text = "не там" if item.pattern == ReconciliationPattern.WRONG_LOCATION else "не та работа"

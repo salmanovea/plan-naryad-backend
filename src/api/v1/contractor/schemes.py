@@ -1,5 +1,4 @@
-from typing import List, Optional
-from uuid import UUID
+from typing import Optional
 
 from fastapi import Query
 from pydantic import BaseModel, ConfigDict
@@ -34,30 +33,6 @@ class ContractorSchema(IDMixinSchema):
     contact_person: Optional[str] = None
     phone: Optional[str] = None
     email: Optional[str] = None
-
-
-class CreateContractorAssignmentRequest(BaseModel):
-    contractor_id: UUID
-    housing_id: UUID
-    section_id: Optional[UUID] = None
-    work_group_id: Optional[UUID] = None
-    work_type_ids: List[str] = []
-
-
-class ContractorAssignmentSchema(IDMixinSchema):
-    model_config = ConfigDict(from_attributes=True)
-
-    contractor_id: UUID
-    housing_id: UUID
-    section_id: Optional[UUID] = None
-    work_group_id: Optional[UUID] = None
-    work_type_ids: List[str] = []
-    contractor: Optional[ContractorSchema] = None
-
-
-class ContractorAssignmentsResponse(BaseModel):
-    housing_id: UUID
-    assignments: List[ContractorAssignmentSchema]
 
 
 class ContractorFilters(HousingBaseFilters):

@@ -1,5 +1,7 @@
 from typing import Optional
 
+from datetime import date
+
 from fastapi import APIRouter, Depends
 
 from src.api.schemes import DataResponseSchema, ResponseGroup
@@ -12,7 +14,7 @@ from src.api.v1.sync.schemes import (
     ImportProjectsRequest,
     ImportSectionsRequest,
     ImportUsersRequest,
-    ImportWorkGroupsRequest,
+    ImportWorksRequest,
     ImportWorkTypesRequest,
     SyncImportRequest,
     SyncRequest,
@@ -42,6 +44,24 @@ async def sync_all(
 ) -> DataResponseSchema[dict]:
     entities = payload.entities if payload else None
     result = await service.sync(entities)
+    return DataResponseSchema(data=result)
+
+
+@sync_router.post(
+    "/work-facts",
+    summary="Sync work facts for a housing from Raport",
+    description="Mirrors facts for one housing and date window. Without dates the window is "
+    "yesterday and today, which is what the nightly run needs.",
+    responses=get_responses(ResponseGroup.ALL_ERRORS),
+)
+@catch_all_exceptions
+async def sync_work_facts(
+    housing_raport_id: str,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    service: SyncReportService = Depends(get_sync_report_service),
+) -> DataResponseSchema[dict]:
+    result = await service.sync_work_facts(housing_raport_id, date_from=date_from, date_to=date_to)
     return DataResponseSchema(data=result)
 
 
@@ -129,23 +149,6 @@ async def sync_contracts(
     service: SyncReportService = Depends(get_sync_report_service),
 ) -> DataResponseSchema[dict]:
     result = await service.sync_contracts()
-    return DataResponseSchema(data=result)
-
-
-@sync_router.post(
-    "/assignments",
-    summary="Sync contractor assignments from Raport",
-    description="Pulls aggregated contractor assignments from Raport and reconciles them locally "
-    "(upsert by composite key; snapshot-delete of source='raport' rows). "
-    "Pass `housing_raport_id` to scope the sync to one housing.",
-    responses=get_responses(ResponseGroup.ALL_ERRORS),
-)
-@catch_all_exceptions
-async def sync_assignments(
-    housing_raport_id: Optional[str] = None,
-    service: SyncReportService = Depends(get_sync_report_service),
-) -> DataResponseSchema[dict]:
-    result = await service.sync_assignments(housing_raport_id=housing_raport_id)
     return DataResponseSchema(data=result)
 
 
@@ -247,22 +250,8 @@ async def import_floors(
 
 
 @sync_router.post(
-    "/import/work-groups",
-    summary="Import work groups from payload",
-    responses=get_responses(ResponseGroup.ALL_ERRORS),
-)
-@catch_all_exceptions
-async def import_work_groups(
-    payload: ImportWorkGroupsRequest,
-    service: SyncReportService = Depends(get_sync_report_service),
-) -> DataResponseSchema[dict]:
-    result = await service.import_work_groups(payload.items)
-    return DataResponseSchema(data=result)
-
-
-@sync_router.post(
     "/import/work-types",
-    summary="Import work types from payload",
+    summary="Import work types («Виды работ») from payload",
     responses=get_responses(ResponseGroup.ALL_ERRORS),
 )
 @catch_all_exceptions
@@ -271,6 +260,20 @@ async def import_work_types(
     service: SyncReportService = Depends(get_sync_report_service),
 ) -> DataResponseSchema[dict]:
     result = await service.import_work_types(payload.items)
+    return DataResponseSchema(data=result)
+
+
+@sync_router.post(
+    "/import/works",
+    summary="Import works («Работы») from payload",
+    responses=get_responses(ResponseGroup.ALL_ERRORS),
+)
+@catch_all_exceptions
+async def import_works(
+    payload: ImportWorksRequest,
+    service: SyncReportService = Depends(get_sync_report_service),
+) -> DataResponseSchema[dict]:
+    result = await service.import_works(payload.items)
     return DataResponseSchema(data=result)
 
 
