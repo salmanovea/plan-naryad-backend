@@ -1,9 +1,10 @@
 """
 HTTP client for the Raport reference APIs.
 
-`ReportApi` owns everything related to talking to Raport: it obtains a fresh
-Keycloak Bearer token via `get_report_access_token()` on every call (no caching),
-issues the request, and paginates list endpoints via `list_all`.
+`ReportApi` owns everything related to talking to Raport: it takes the Keycloak Bearer
+token from `get_report_access_token()` (cached for its lifetime, see `auth.py`), issues
+the request — once more with a fresh token if Raport answers 401 — and paginates list
+endpoints via `list_all`.
 
 Method names follow the convention `<verb>_<entity>[_<by_parent>]`:
   - list_projects()                     → GET /api/v1/projects
@@ -22,7 +23,7 @@ import httpx
 
 from src.config.logger import LoggerProvider
 from src.config.settings import app_config
-from src.external.report.auth import get_report_access_token
+from src.external.report.auth import clear_token_cache, get_report_access_token
 
 log = LoggerProvider().get_logger(__name__)
 
@@ -53,8 +54,7 @@ class ReportApi:
         path: str,
         params: dict[str, Any] | None = None,
     ) -> Any:
-        """Execute a single HTTP request with a fresh Bearer token."""
-        token = await get_report_access_token()
+        """Execute a single HTTP request; a 401 is retried once with a fresh token."""
         clean_params = {k: v for k, v in (params or {}).items() if v is not None}
         url = f"{self.base_url}{path}"
 
