@@ -41,7 +41,7 @@ from src.external.report.api import ReportApi
 from src.models import managers
 from src.models.dbo.tables.work import DependencyType
 from src.models.managers.common import BaseManager
-from src.services.common import BaseService
+from src.services.common import BaseService, end_transaction
 from src.services.contractor_works import ContractorWorksService, HousingAssignments
 
 log = LoggerProvider().get_logger(__name__)
@@ -76,16 +76,24 @@ def _dedupe_by(rows: list[dict], key: str) -> list[dict]:
 
 
 def _as_date(value: Any) -> date | None:
-    """Raport sends an ISO datetime; the column is a plain date and asyncpg wants a date."""
+    """Raport sends an ISO datetime; the column is a plain date and asyncpg wants a date.
+
+    Raport normalizes datetimes to UTC on output, so the calendar date must be taken in
+    *local* time (TZ=Europe/Moscow in the containers): a fact entered 28.08 00:30 MSK
+    arrives as `…-27T21:30:00Z` and would otherwise land on the 27th (DEV-6858, item 11).
+    """
     if not value:
         return None
     try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).date()
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except ValueError:
         try:
             return date.fromisoformat(str(value)[:10])
         except ValueError:
             return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone()
+    return parsed.date()
 
 
 def _nested_id(payload: Any, *keys: str) -> str | None:
@@ -517,6 +525,7 @@ class SyncReportService(BaseService):
             date_to = date.today()
             date_from = date_to - timedelta(days=1)
 
+        await end_transaction(self.db)
         rows_src = await self._fetch_work_facts(housing_raport_id, date_from, date_to)
         if not rows_src:
             return {"work_facts": 0, "skipped": 0, "without_contractor": 0}

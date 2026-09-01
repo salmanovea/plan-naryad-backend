@@ -17,7 +17,7 @@ from src.config.logger import LoggerProvider
 from src.config.postgres.db_config import get_session
 from src.external.report.api import ReportApi
 from src.models import managers
-from src.services.common import BaseService
+from src.services.common import BaseService, end_transaction
 
 log = LoggerProvider().get_logger(__name__)
 
@@ -87,6 +87,7 @@ class ContractorWorksService(BaseService):
             result.skipped["housing_not_synced"] = 1
             return result
 
+        await end_transaction(self.db)
         rows = await self._fetch_all(housing_id=UUID(housing.raport_id))
         await self._fill(result, rows, housing_id)
         log.info(
@@ -104,6 +105,7 @@ class ContractorWorksService(BaseService):
         if not work or not work.raport_id or not floor or not floor.raport_id:
             return []
 
+        await end_transaction(self.db)
         rows = await self._fetch_all(work_id=UUID(work.raport_id), floor_id=UUID(floor.raport_id))
         contractor_raport_ids = {rid for rid in (_nested_id(r, "contractor", "id") for r in rows) if rid}
         contractor_map = await self._resolve(self.contractor_manager, contractor_raport_ids)

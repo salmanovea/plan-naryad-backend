@@ -127,6 +127,82 @@ async def test_a_broken_housing_does_not_stop_the_rest(async_test_session):
     assert "sync_work_facts" in result["housings_detail"][0]["errors"][0]
 
 
+async def test_a_failed_step_is_rolled_back_and_the_session_stays_usable(async_test_session):
+    """The night of the dead connection: the run shares one session across ~550 housings.
+
+    A step that fails halfway must not leave its writes pending for the next housing's commit
+    to pick up, and must not leave the session in the «rollback first» state that turned one
+    dead connection into a failed run.
+    """
+    await _sequence(async_test_session)
+    await _clear_plan(async_test_session)
+    plans = managers.PlanItemManager(async_test_session)
+
+    async def half_done_then_dead(**kwargs):
+        await plans.bulk_insert(
+            [
+                {
+                    "date": DAY,
+                    "housing_id": HOUSING,
+                    "section_id": SECTION_1,
+                    "floor_id": FLOOR_1,
+                    "work_id": WORK_A,
+                    "contractor_id": CONTRACTOR,
+                    "source": "auto",
+                    "status": PlanStatus.DRAFT.value,
+                }
+            ]
+        )
+        raise RuntimeError("cannot call PreparedStatement.fetch(): underlying connection is closed")
+
+    with (
+        patch(
+            "src.services.task.service.SyncReportService.sync_work_facts",
+            new=AsyncMock(return_value={"work_facts": 0}),
+        ),
+        patch(
+            "src.services.task.service.AutogenerationService.generate_daily_plan",
+            new=AsyncMock(side_effect=half_done_then_dead),
+        ),
+    ):
+        result = await TaskService(async_test_session).run_nightly_plan(
+            target_date=DAY, housing_raport_id=RAPORT_HOUSING
+        )
+
+    assert result["failed"] == 1
+    assert "connection is closed" in result["housings_detail"][0]["errors"][0]
+    # The pending insert was rolled back, not left for somebody else's commit.
+    assert await plans.search(housing_id=HOUSING, date=DAY) == []
+    # And the session works again: a plain query on it succeeds.
+    assert await managers.HousingManager(async_test_session).get_by_id(HOUSING) is not None
+
+
+async def test_the_run_continues_past_a_dead_transaction(async_test_session):
+    await _sequence(async_test_session)
+    await _clear_plan(async_test_session)
+
+    with (
+        patch.object(
+            TaskService,
+            "housings_with_sequence",
+            new=AsyncMock(return_value=[(HOUSING, RAPORT_HOUSING), (HOUSING, RAPORT_HOUSING)]),
+        ),
+        patch(
+            "src.services.task.service.SyncReportService.sync_work_facts",
+            new=AsyncMock(return_value={"work_facts": 0}),
+        ),
+        patch(
+            "src.services.task.service.AutogenerationService.generate_daily_plan",
+            new=AsyncMock(side_effect=[RuntimeError("underlying connection is closed"), ([1, 2], [])]),
+        ),
+    ):
+        result = await TaskService(async_test_session).run_nightly_plan(target_date=DAY)
+
+    assert result["housings"] == 2
+    assert result["failed"] == 1
+    assert result["positions"] == 2
+
+
 async def test_generation_failure_is_reported_too(async_test_session):
     await _sequence(async_test_session)
 
