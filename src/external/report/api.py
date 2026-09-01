@@ -58,16 +58,22 @@ class ReportApi:
         clean_params = {k: v for k, v in (params or {}).items() if v is not None}
         url = f"{self.base_url}{path}"
 
-        async with httpx.AsyncClient(
-            timeout=self.timeout,
-            verify=app_config.keycloak_verify_ssl,
-        ) as http:
-            response = await http.request(
-                method,
-                url,
-                params=clean_params,
-                headers={"Authorization": f"Bearer {token}"},
-            )
+        for attempt in (1, 2):
+            token = await get_report_access_token()
+            async with httpx.AsyncClient(
+                timeout=self.timeout,
+                verify=app_config.keycloak_verify_ssl,
+            ) as http:
+                response = await http.request(
+                    method,
+                    url,
+                    params=clean_params,
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+            if response.status_code != 401 or attempt == 2:
+                break
+            log.warning(f"Raport API {method} {path} answered 401 — retrying with a fresh token")
+            clear_token_cache()
 
         if response.status_code >= 400:
             log.error(f"Raport API {method} {path} failed: status={response.status_code} body={response.text[:500]}")

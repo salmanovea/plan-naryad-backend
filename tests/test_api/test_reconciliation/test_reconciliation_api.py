@@ -53,6 +53,25 @@ async def test_list_daily_summaries_returns_200(client):
     assert isinstance(body["data"], list)
 
 
+async def test_summaries_accept_the_full_filter_set(client):
+    """DEV-6858 item 7: the frontend sends project_id (and friends) — the table only has
+    housing_id and date, so incompatible filters must be dropped, not passed to SQL."""
+    response = await client.get(
+        f"{API}/reconciliation/summaries",
+        params={
+            "project_id": "a3b73f0e-5367-4266-aa52-6d0462e0d020",
+            "housing_id": "c80dcca6-cdc1-4274-853f-397149d334f0",
+            "date_from": "2026-08-26",
+            "date_to": "2026-08-28",
+            "page": 1,
+            "per_page": 20,
+        },
+    )
+
+    assert response.status_code == 200
+    assert isinstance(response.json()["data"], list)
+
+
 async def test_get_reconciliation_result_not_found_returns_404(client):
     response = await client.get(f"{API}/reconciliation/results/00000000-0000-0000-0000-000000000000")
 

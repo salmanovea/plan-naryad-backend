@@ -136,12 +136,17 @@ async def generate_plan(
     )
     if items:
         message = f"Сгенерировано позиций: {len(items)} на {target_date}."
+        scope: dict = {"date": target_date, "housing_id": body.housing_id}
+        if body.section_id:
+            scope["section_id"] = body.section_id
+        enriched = await service.get_plan_items(**scope)
     else:
         message = f"Не удалось сгенерировать план на {target_date}."
+        enriched = []
     return DataResponseSchema[GeneratePlanResponse](
         data=GeneratePlanResponse(
-            items=[PlanItemSchema.model_validate(i) for i in items],
-            count=len(items),
+            items=enriched,
+            count=len(enriched),
             message=message,
             reasons=reasons,
         )
