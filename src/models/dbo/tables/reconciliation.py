@@ -80,11 +80,11 @@ class ReconciliationResult(IDMixin, Base):
     pattern: Mapped[Optional[str]] = mapped_column(String(30))
 
     plan_item_id: Mapped[Optional[UUID]] = mapped_column(
-        ForeignKey("plan_items.id", name="fk_reconciliation_results_plan_item_id"),
+        ForeignKey("plan_items.id", name="fk_reconciliation_results_plan_item_id", ondelete="SET NULL"),
         index=True,
     )
     work_fact_id: Mapped[Optional[UUID]] = mapped_column(
-        ForeignKey("work_facts.id", name="fk_reconciliation_results_work_fact_id"),
+        ForeignKey("work_facts.id", name="fk_reconciliation_results_work_fact_id", ondelete="SET NULL"),
         index=True,
     )
 

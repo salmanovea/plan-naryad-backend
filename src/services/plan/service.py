@@ -69,6 +69,7 @@ def default_target_date(now: Optional[datetime] = None) -> date:
 
 class AutogenerationService(BaseService):
     def __init__(self, db: AsyncSession):
+        self.db = db
         self.plan_item_manager = managers.PlanItemManager(db)
         self.work_fact_manager = managers.WorkFactManager(db)
         self.housing_manager = managers.HousingManager(db)
@@ -404,6 +405,7 @@ class AutogenerationService(BaseService):
             for item in items:
                 await self.log_action(ActionType.PLAN_ITEM_DELETE, item.id, actor, {"date": str(item.date)})
             await self.plan_item_manager.bulk_delete(list(found))
+            await self.db.commit()
         return {"deleted": len(found), "not_found": [str(i) for i in set(plan_item_ids) - found]}
 
     async def transfer_day(
@@ -476,7 +478,10 @@ class AutogenerationService(BaseService):
         """
         ready: list[tuple[int, UUID]] = []
         for work_id, node in nodes.items():
-            if self._cell_done(section_id, floor_id, work_id, slice_):
+            states = slice_.states_on(section_id, floor_id, work_id)
+            if not states:
+                continue
+            if all(state.is_done for state in states):
                 continue
             if all(self._cell_done(section_id, floor_id, dep, slice_) for dep in node.depends_on):
                 if all(self._cell_started(section_id, floor_id, dep, slice_) for dep in node.depends_on_ss):
@@ -562,7 +567,10 @@ class AutogenerationService(BaseService):
         sections and floors where it is not finished, up to the contractor's floor limit.
 
         A re-run replaces the whole day, manual positions included, which is why it needs
-        `force`; the caller is expected to have confirmed with the user first.
+        `force`; the caller is expected to have confirmed with the user first. The day is
+        replaced only once the new one is built: Raport is read first, and the delete and the
+        insert share one short transaction — so neither a failure in between nor an empty
+        answer from Raport can leave the day empty.
 
         `reasons` explains an empty result in the spec's own wording.
         """
@@ -586,8 +594,6 @@ class AutogenerationService(BaseService):
         existing = await self.plan_item_manager.search(**scope)
         if existing and not force:
             return existing, reasons
-        if existing:
-            await self.plan_item_manager.bulk_delete([item.id for item in existing])
 
         housing_nodes, section_nodes = await self._load_tech_nodes(housing_id)
         if not housing_nodes and not section_nodes:
@@ -622,8 +628,6 @@ class AutogenerationService(BaseService):
                 continue
             floors = await self.floor_manager.search(section_id=section.id, order_by=["floor_number"])
 
-            # Readiness is evaluated once per floor and reused; the frontier of the whole
-            # section is the union, walked in sequence order.
             ready_by_floor = {floor.id: set(self._ready_works(nodes, section.id, floor.id, slice_)) for floor in floors}
             frontier = sorted(
                 {work_id for ready in ready_by_floor.values() for work_id in ready},
@@ -670,9 +674,19 @@ class AutogenerationService(BaseService):
                     )
                     floors_taken[(contractor_id, work_id)] = taken + 1
 
+        if existing and not plan_rows and not slice_.cells:
+            reasons.append(
+                "Рапорт не вернул ни одной ячейки шахматки по корпусу — существующий план-наряд оставлен без изменений."
+            )
+            return [], reasons
+
+        if existing:
+            await self.plan_item_manager.bulk_delete([item.id for item in existing])
         if plan_rows:
             await self.plan_item_manager.bulk_insert(plan_rows, is_commit=True)
+            reasons.extend(dict.fromkeys(missing_contractor))
             return await self.plan_item_manager.search(**scope), reasons
+        await self.db.commit()
 
         # Nothing generated — say why, in the spec's wording where it has one.
         reasons.extend(dict.fromkeys(missing_contractor))
