@@ -323,7 +323,7 @@ class AutogenerationService(BaseService):
         if contractor_id not in allowed:
             return None, (
                 f"Не назначен подрядчик для работы {work.name} секция {section.name} "
-                f"этаж {floor.floor_number}. Добавьте назначение в системе Рапорт."
+                f"этаж {floor_label(floor)}. Добавьте назначение в системе Рапорт."
             )
 
         slice_ = await self.report_cells.get_housing_slice(housing_id, work_ids=[work_id])
@@ -646,7 +646,7 @@ class AutogenerationService(BaseService):
                         work = works.get(work_id)
                         missing_contractor.append(
                             f"Не удалось сгенерировать план на {target_date}. Не назначен подрядчик для работы "
-                            f"{work.name if work else work_id} секция {section.name} этаж {floor.floor_number}. "
+                            f"{work.name if work else work_id} секция {section.name} этаж {floor_label(floor)}. "
                             "Добавьте назначение в системе Рапорт."
                         )
                         continue

@@ -281,7 +281,7 @@ class SyncReportService(BaseService):
                     {
                         "raport_id": str(f["id"]),
                         "section_id": local_s_id,
-                        "floor_number": f.get("number") or f.get("sort_order") or 0,
+                        "floor_number": f.get("sort_order") or 0,
                         "name": _trim(f.get("name"), 100),
                     }
                 )

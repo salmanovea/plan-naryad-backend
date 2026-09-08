@@ -54,7 +54,7 @@ def _make_report_api_mock(overrides: dict | None = None) -> MagicMock:
             {"id": RAPORT_HOUSING_ID, "name": "Корпус 5А", "complex_name": "ЖК Тест"}
         ],
         "list_housing_sections": [{"id": RAPORT_SECTION_ID, "name": "Секция 1", "number": 1}],
-        "list_section_floors": [{"id": RAPORT_FLOOR_ID, "name": "1 этаж", "number": 1}],
+        "list_section_floors": [{"id": RAPORT_FLOOR_ID, "name": "1 этаж", "sort_order": 1}],
         "list_contractors": [
             {
                 "id": RAPORT_CONTRACTOR_ID,
