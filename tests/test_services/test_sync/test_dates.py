@@ -1,5 +1,4 @@
-"""Folding Raport's UTC datetimes to Moscow calendar days.
-"""
+"""Folding Raport's UTC datetimes to Moscow calendar days."""
 
 import os
 import time

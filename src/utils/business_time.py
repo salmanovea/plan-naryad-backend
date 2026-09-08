@@ -1,5 +1,4 @@
-"""Business clock of the service: all today and now are Moscow time.
-"""
+"""Business clock of the service: all today and now are Moscow time."""
 
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
