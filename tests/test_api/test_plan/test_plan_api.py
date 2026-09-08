@@ -1,4 +1,4 @@
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -196,3 +196,114 @@ async def test_daily_plan_items_are_enriched(client):
     assert item["section_name"] == "Секция 1"
     assert item["floor_name"] == "Этаж 1"
     assert item["contractor_name"] == "ООО Стройтест"
+
+
+async def test_bulk_delete_deletes_rows_and_survives_reconciliation_links(client, async_test_session):
+    """both halves in one flow.
+
+    The rows must actually be gone after a 200 (a delete without a commit used to roll
+    back silently), and a reconciliation result pointing at the deleted position must
+    survive with its link nulled instead of blowing the request up with an FK error.
+    The check runs through the API — a separate session — so a lost commit fails here.
+    """
+    target = "2025-04-05"
+    created = await client.post(
+        f"{API}/plan-naryad/",
+        json={
+            "date": target,
+            "housing_id": HOUSING_1_ID,
+            "section_id": SECTION_1_ID,
+            "floor_id": FLOOR_1_ID,
+            "work_id": WORK_1_ID,
+            "contractor_id": CONTRACTOR_1_ID,
+        },
+    )
+    assert created.status_code == 201, created.json()
+    item_id = created.json()["data"]["id"]
+
+    from datetime import date as date_type
+
+    from src.models import managers
+    from src.models.dbo.tables.reconciliation import ReconciliationStatus
+
+    result = await managers.ReconciliationResultManager(async_test_session).create(
+        {
+            "date": date_type(2025, 4, 5),
+            "housing_id": UUID(HOUSING_1_ID),
+            "section_id": UUID(SECTION_1_ID),
+            "floor_id": UUID(FLOOR_1_ID),
+            "work_id": UUID(WORK_1_ID),
+            "status": ReconciliationStatus.DONE_FULL.value,
+            "plan_item_id": UUID(item_id),
+        }
+    )
+
+    response = await client.post(f"{API}/plan-naryad/bulk-delete", json={"ids": [item_id]})
+
+    assert response.status_code == 200, response.json()
+    assert response.json()["data"]["deleted"] == 1
+
+    daily = await client.get(
+        f"{API}/plan-naryad/daily",
+        params={"target_date": target, "housing_id": HOUSING_1_ID},
+    )
+    assert daily.json()["data"]["items"] == []
+
+    await async_test_session.refresh(result)
+    assert result.plan_item_id is None
+
+
+async def test_generate_response_carries_labels(client, async_test_session, monkeypatch):
+    """the generate response must name the floor/work/contractor —
+    the raw generated rows have no relations loaded and used to come back as bare ids."""
+    from decimal import Decimal
+
+    from src.models import managers
+    from src.services.contractor_works import AssignmentKey, HousingAssignments
+    from src.services.contractor_works.service import ContractorWorksService
+    from src.services.report_cells import CellKey, CellState, HousingSlice
+    from src.services.report_cells.service import ReportCellsService
+
+    await managers.TechSequenceItemManager(async_test_session).create(
+        {
+            "housing_id": UUID(HOUSING_1_ID),
+            "section_id": None,
+            "work_id": UUID(WORK_1_ID),
+            "order": 1,
+            "depends_on": [],
+            "depends_on_ss": [],
+            "lag_days": 0,
+            "floor_sorting_direction": None,
+            "estimated_days": 1,
+            "daily_norm_volume": 0,
+            "total_volume": 0,
+            "source": "raport",
+        }
+    )
+
+    cell = CellKey(UUID(SECTION_1_ID), UUID(FLOOR_1_ID), UUID(WORK_1_ID), UUID(CONTRACTOR_1_ID))
+
+    async def _slice(self, housing_id, work_ids=None):
+        return HousingSlice(
+            cells={cell: CellState(percent=Decimal("0"), is_done=False, work_cell_contractor_id=uuid4())}
+        )
+
+    async def _assignments(self, housing_id):
+        key = AssignmentKey(cell.section_id, cell.floor_id, cell.work_id)
+        return HousingAssignments(by_cell={key: [cell.contractor_id]})
+
+    monkeypatch.setattr(ReportCellsService, "get_housing_slice", _slice)
+    monkeypatch.setattr(ContractorWorksService, "get_housing_assignments", _assignments)
+
+    response = await client.post(
+        f"{API}/plan-naryad/generate",
+        json={"date": "2025-04-06", "housing_id": HOUSING_1_ID, "force": True},
+    )
+
+    assert response.status_code == 200, response.json()
+    items = response.json()["data"]["items"]
+    assert items, response.json()
+    item = items[0]
+    assert item["floor_name"] == "Этаж 1"
+    assert item["contractor_name"] == "ООО Стройтест"
+    assert item["work_name"]
