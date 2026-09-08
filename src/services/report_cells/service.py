@@ -25,7 +25,7 @@ from src.config.postgres.db_config import get_session
 from src.external.report.api import ReportApi, ReportApiError
 from src.models import managers
 from src.models.managers.common import BaseManager
-from src.services.common import BaseService
+from src.services.common import BaseService, end_transaction
 
 log = LoggerProvider().get_logger(__name__)
 
@@ -149,8 +149,7 @@ class ReportCellsService(BaseService):
         section_map = await self._reverse_map(self.section_manager, housing_id=housing_id)
         floor_map = await self._floor_map(housing_id)
 
-        # Fetch first, resolve contractors second: there are ~48k contractors in total but
-        # only a handful appear on one housing, so the map is built from what was seen.
+        await end_transaction(self.db)
         rows_by_work: dict[str, list[dict]] = {}
         seen_contractors: set[str] = set()
         for work_raport_id in works:

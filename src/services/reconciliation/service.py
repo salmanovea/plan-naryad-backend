@@ -148,9 +148,17 @@ class ReconciliationService(BaseService):
         self,
         pagination: PaginationParams,
         order_by: List[str],
+        project_id: Optional[UUID] = None,
         **filters,
     ) -> Tuple[List[DailySummarySchema], int]:
-        """List daily summaries with the denormalized housing name."""
+        """List daily summaries with the denormalized housing name.
+
+        `project_id` is resolved to the project's housings because the table itself
+        only carries `housing_id`. An explicit housing filter wins over the project.
+        """
+        if project_id and not filters.get("housing_id") and not filters.get("housing_id__in"):
+            housing_ids = await self._housings_in_scope(None, project_id)
+            filters["housing_id__in"] = housing_ids or [UUID(int=0)]
         query = self.daily_summary_manager.get_enriched_query()
         items = await self.daily_summary_manager.search(
             query=query, order_by=order_by, pagination=pagination, **filters

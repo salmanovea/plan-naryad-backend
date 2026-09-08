@@ -36,7 +36,7 @@ class ReconciliationResultSchema(IDMixinSchema):
     section_id: UUID
     floor_id: UUID
     work_id: UUID
-    contractor_id: UUID
+    contractor_id: Optional[UUID] = None
     source_percent: Optional[Decimal] = None
     fact_percent: Optional[Decimal] = None
     completion_ratio: Optional[Decimal] = None

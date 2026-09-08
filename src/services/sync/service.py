@@ -41,7 +41,8 @@ from src.external.report.api import ReportApi
 from src.models import managers
 from src.models.dbo.tables.work import DependencyType
 from src.models.managers.common import BaseManager
-from src.services.common import BaseService
+from src.utils.business_time import business_today, business_tz
+from src.services.common import BaseService, end_transaction
 from src.services.contractor_works import ContractorWorksService, HousingAssignments
 
 log = LoggerProvider().get_logger(__name__)
@@ -76,16 +77,24 @@ def _dedupe_by(rows: list[dict], key: str) -> list[dict]:
 
 
 def _as_date(value: Any) -> date | None:
-    """Raport sends an ISO datetime; the column is a plain date and asyncpg wants a date."""
+    """Raport sends an ISO datetime; the column is a plain date and asyncpg wants a date.
+
+    Raport normalizes datetimes to UTC on output, so the calendar date must be taken in
+    *local* time (TZ=Europe/Moscow in the containers): a fact entered 28.08 00:30 MSK
+    arrives as `…-27T21:30:00Z` and would otherwise land on the 27th (DEV-6858, item 11).
+    """
     if not value:
         return None
     try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).date()
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except ValueError:
         try:
             return date.fromisoformat(str(value)[:10])
         except ValueError:
             return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(business_tz())
+    return parsed.date()
 
 
 def _nested_id(payload: Any, *keys: str) -> str | None:
@@ -273,7 +282,7 @@ class SyncReportService(BaseService):
                     {
                         "raport_id": str(f["id"]),
                         "section_id": local_s_id,
-                        "floor_number": f.get("number") or f.get("sort_order") or 0,
+                        "floor_number": f.get("sort_order") or 0,
                         "name": _trim(f.get("name"), 100),
                     }
                 )
@@ -514,9 +523,10 @@ class SyncReportService(BaseService):
         housing_id = local[0].id
 
         if date_from is None and date_to is None:
-            date_to = date.today()
+            date_to = business_today()
             date_from = date_to - timedelta(days=1)
 
+        await end_transaction(self.db)
         rows_src = await self._fetch_work_facts(housing_raport_id, date_from, date_to)
         if not rows_src:
             return {"work_facts": 0, "skipped": 0, "without_contractor": 0}
@@ -703,9 +713,12 @@ class SyncReportService(BaseService):
         """Return (plan, source_kind) for a housing or one of its sections.
 
         Raport builds calendar plans at both scopes, so the lookup is scoped too: with
-        `section_raport_id` it asks for that section's plan and gives up if there is none
-        (the housing-wide plan already covers the section). Without it, it falls back to
-        the default plan-template.
+        `section_raport_id` it asks for that section's plan; without it, the housing-wide
+        plan. No calendar plan means no sequence — deliberately no fallback to the default
+        plan-template (DEV-6936): a plan-naryad must never be generated for a housing
+        nobody planned, and the КП tasks already carry `line_number`,
+        `floor_sorting_direction` and `planning_type` themselves (copied from the template
+        when the КП is created), so the template adds nothing.
 
         `plan` carries `data` (tasks) and `links` (predecessor edges).
         """
@@ -716,16 +729,7 @@ class SyncReportService(BaseService):
         if check.get("is_exists") and check.get("data"):
             cp = await self.report.get_calendar_plan(str(check["data"][0]["id"]))
             return (cp.get("plan") or {}, "calendar")
-
-        if section_raport_id:
-            return ({}, None)
-
-        templates = await self.report.list_plan_templates(is_default="true", per_page=1)
-        tdata = templates.get("data") or []
-        if not tdata:
-            return ({}, None)
-        tpl = await self.report.get_plan_template_data(str(tdata[0]["id"]))
-        return (tpl.get("plan") or {}, "template")
+        return ({}, None)
 
     async def sync_tech_sequence(self, housing_raport_id: str) -> dict[str, int]:
         """Sync the technological sequences of one housing from Raport.
@@ -754,9 +758,7 @@ class SyncReportService(BaseService):
         for section in await self.section_manager.search(housing_id=housing_id):
             if not section.raport_id:
                 continue
-            section_plan, kind = await self._load_plan_structure(housing_raport_id, section.raport_id)
-            if kind is None:
-                continue
+            section_plan, _ = await self._load_plan_structure(housing_raport_id, section.raport_id)
             await self._store_sequence_scope(section_plan, housing_id, section.id, totals)
 
         return totals

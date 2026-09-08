@@ -118,13 +118,18 @@ async def list_daily_summaries(
     filter_data = filters.model_dump(exclude_none=True)
     date_from = filter_data.pop("date_from", None)
     date_to = filter_data.pop("date_to", None)
-    filter_data.pop("status", None)
+    summary_filters = {key: filter_data[key] for key in ("housing_id", "housing_id__in") if key in filter_data}
     if date_from:
-        filter_data["date__gte"] = date_from
+        summary_filters["date__gte"] = date_from
     if date_to:
-        filter_data["date__lte"] = date_to
+        summary_filters["date__lte"] = date_to
 
-    items, total = await service.list_summaries(pagination=pagination, order_by=["-date"], **filter_data)
+    items, total = await service.list_summaries(
+        pagination=pagination,
+        order_by=["-date"],
+        project_id=filter_data.get("project_id"),
+        **summary_filters,
+    )
     return ListDataResponseSchema[DailySummarySchema].create(
         list_data=items,
         pagination=pagination,

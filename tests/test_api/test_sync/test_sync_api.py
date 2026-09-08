@@ -54,7 +54,7 @@ def _make_report_api_mock(overrides: dict | None = None) -> MagicMock:
             {"id": RAPORT_HOUSING_ID, "name": "Корпус 5А", "complex_name": "ЖК Тест"}
         ],
         "list_housing_sections": [{"id": RAPORT_SECTION_ID, "name": "Секция 1", "number": 1}],
-        "list_section_floors": [{"id": RAPORT_FLOOR_ID, "name": "1 этаж", "number": 1}],
+        "list_section_floors": [{"id": RAPORT_FLOOR_ID, "name": "1 этаж", "sort_order": 1}],
         "list_contractors": [
             {
                 "id": RAPORT_CONTRACTOR_ID,
@@ -89,8 +89,10 @@ def _make_report_api_mock(overrides: dict | None = None) -> MagicMock:
         ],
     }
     overrides = overrides or {}
-    # `plan` override lets a test supply an empty/custom tech-sequence snapshot.
+    # `plan` override lets a test supply an empty/custom tech-sequence snapshot;
+    # `has_calendar_plan=False` simulates a housing nobody planned (DEV-6936).
     plan = overrides.pop("plan", _DEFAULT_PLAN)
+    has_calendar_plan = overrides.pop("has_calendar_plan", True)
     pages.update(overrides)
 
     async def _list_all(method_name: str, **kwargs) -> list[dict]:
@@ -98,8 +100,13 @@ def _make_report_api_mock(overrides: dict | None = None) -> MagicMock:
 
     mock = MagicMock()
     mock.list_all = AsyncMock(side_effect=_list_all)
-    # Plan endpoints for tech-sequence sync (no calendar plan → default template).
-    mock.check_calendar_plan = AsyncMock(return_value={"is_exists": False, "data": []})
+
+    async def _check_calendar_plan(**kwargs):
+        if has_calendar_plan and not kwargs.get("section_id"):
+            return {"is_exists": True, "data": [{"id": RAPORT_TEMPLATE_ID}]}
+        return {"is_exists": False, "data": []}
+
+    mock.check_calendar_plan = AsyncMock(side_effect=_check_calendar_plan)
     mock.list_plan_templates = AsyncMock(
         return_value={"data": [{"id": RAPORT_TEMPLATE_ID, "is_default": True}], "pagination": {}}
     )
@@ -401,7 +408,7 @@ async def _sync_tech_sequence_prerequisites(client):
 
 
 @pytest.mark.smoke
-async def test_sync_tech_sequence_builds_from_template(client, async_test_session):
+async def test_sync_tech_sequence_builds_from_calendar_plan(client, async_test_session):
     mock = _make_report_api_mock()
     with patch("src.services.sync.service.ReportApi", return_value=mock):
         await _sync_tech_sequence_prerequisites(client)
@@ -430,6 +437,31 @@ async def test_sync_tech_sequence_builds_from_template(client, async_test_sessio
     # wt1 is the root — no predecessors
     assert by_wt[wt1.id].depends_on == []
     assert by_wt[wt1.id].order == 1
+
+
+async def test_no_calendar_plan_means_no_sequence(client, async_test_session):
+    """DEV-6936: a housing nobody planned must not get a sequence from the default
+    template — and rows created by the old fallback are purged on re-sync."""
+    with patch("src.services.sync.service.ReportApi", return_value=_make_report_api_mock()):
+        await _sync_tech_sequence_prerequisites(client)
+        await client.post(f"{API}/sync/tech-sequence", params={"housing_raport_id": RAPORT_HOUSING_ID})
+
+    no_plan = _make_report_api_mock(overrides={"has_calendar_plan": False})
+    with patch("src.services.sync.service.ReportApi", return_value=no_plan):
+        resp = await client.post(f"{API}/sync/tech-sequence", params={"housing_raport_id": RAPORT_HOUSING_ID})
+
+    assert resp.status_code == 200
+    assert resp.json()["data"]["tech_sequence"] == 0
+    no_plan.list_plan_templates.assert_not_called()
+    no_plan.get_plan_template_data.assert_not_called()
+
+    from src.models import managers
+
+    housing = (await managers.HousingManager(async_test_session).search(raport_id=RAPORT_HOUSING_ID))[0]
+    remaining = await managers.TechSequenceItemManager(async_test_session).search(
+        housing_id=housing.id, source="raport"
+    )
+    assert remaining == []
 
 
 async def test_sync_tech_sequence_snapshot_delete(client, async_test_session):
