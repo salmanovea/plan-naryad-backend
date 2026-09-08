@@ -24,6 +24,7 @@ from src.models.dbo.tables.plan import PlanItem, PlanSource, PlanStatus
 from src.models.dbo.tables.settings import ActionType
 from src.models.dbo.tables.work import FloorSortingDirection
 from src.services.common import SYSTEM_ACTOR, BaseService, floor_label
+from src.utils.business_time import business_now
 from src.services.contractor_works import ContractorWorksService
 from src.services.report_cells import CellKey, HousingSlice, ReportCellsService
 
@@ -61,7 +62,7 @@ def default_target_date(now: Optional[datetime] = None) -> date:
     The 03:00 scheduled run lands on today; a run started during the day or the evening
     targets tomorrow, because today's positions have already gone to the contractors.
     """
-    moment = now or datetime.now()
+    moment = now or business_now()
     if moment.hour < app_config.plan_transfer_cutoff_hour:
         return moment.date()
     return moment.date() + timedelta(days=1)
@@ -353,7 +354,7 @@ class AutogenerationService(BaseService):
             plan_item_id,
             {
                 "rs_confirmed": True,
-                "rs_confirmed_at": datetime.now(),
+                "rs_confirmed_at": business_now(),
                 "rs_confirmed_by": actor,
                 "status": PlanStatus.CONFIRMED.value,
             },
@@ -380,7 +381,7 @@ class AutogenerationService(BaseService):
         items = await self.plan_item_manager.get_by_ids(list(set(plan_item_ids)))
         found = {item.id for item in items}
         if items:
-            confirmed_at = datetime.now()
+            confirmed_at = business_now()
             await self.plan_item_manager.bulk_update_by_batch(
                 [
                     {

@@ -25,6 +25,7 @@ from src.models import managers
 from src.services.common import BaseService
 from src.services.plan.service import AutogenerationService, default_target_date
 from src.services.sync.service import SyncReportService
+from src.utils.business_time import business_today
 
 log = LoggerProvider().get_logger(__name__)
 
@@ -122,7 +123,7 @@ class TaskService(BaseService):
 
     async def run_transfer(self, target_date: Optional[date] = None) -> dict:
         """Hand the day's positions over. Defaults to today — the cutoff job wants no arguments."""
-        day = target_date or date.today()
+        day = target_date or business_today()
         result = await AutogenerationService(self.db).transfer_day(day)
         log.info("transfer: %s for %s", result, day)
         return {"date": day, **result}

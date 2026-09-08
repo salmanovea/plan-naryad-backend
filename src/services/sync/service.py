@@ -41,6 +41,7 @@ from src.external.report.api import ReportApi
 from src.models import managers
 from src.models.dbo.tables.work import DependencyType
 from src.models.managers.common import BaseManager
+from src.utils.business_time import business_today, business_tz
 from src.services.common import BaseService, end_transaction
 from src.services.contractor_works import ContractorWorksService, HousingAssignments
 
@@ -92,7 +93,7 @@ def _as_date(value: Any) -> date | None:
         except ValueError:
             return None
     if parsed.tzinfo is not None:
-        parsed = parsed.astimezone()
+        parsed = parsed.astimezone(business_tz())
     return parsed.date()
 
 
@@ -522,7 +523,7 @@ class SyncReportService(BaseService):
         housing_id = local[0].id
 
         if date_from is None and date_to is None:
-            date_to = date.today()
+            date_to = business_today()
             date_from = date_to - timedelta(days=1)
 
         await end_transaction(self.db)
