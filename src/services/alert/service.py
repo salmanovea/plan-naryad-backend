@@ -1,10 +1,11 @@
-from datetime import date, datetime
+from datetime import date
 from typing import Dict, List, Optional, Tuple
 from uuid import UUID
 
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.utils.business_time import business_now
 from src.api.schemes import PaginationParams
 from src.api.v1.alert.schemes import AlertSchema
 from src.config.logger import LoggerProvider
@@ -134,7 +135,7 @@ class AlertService(BaseService):
                             "contractor_id": contractor_id,
                             "recipient_role": "RS",
                             "message": f"Подрядчик «{contractor.name}» не подал факт за {alert_date}.",
-                            "created_at": datetime.now(),
+                            "created_at": business_now(),
                         }
                     )
 
@@ -148,7 +149,7 @@ class AlertService(BaseService):
                     "housing_id": housing_id,
                     "recipient_role": "RS",
                     "message": f"Сводка за {alert_date} по объекту «{housing.name}» готова.",
-                    "created_at": datetime.now(),
+                    "created_at": business_now(),
                 }
             )
 
@@ -201,7 +202,7 @@ class AlertService(BaseService):
                             f"Критических отклонений: {len(items)}\n"
                             f"Пример: {items[0].status} (выполнение: {items[0].completion_ratio * 100:.0f}%)"
                         ),
-                        "created_at": datetime.now(),
+                        "created_at": business_now(),
                     }
                 )
 
@@ -235,7 +236,7 @@ class AlertService(BaseService):
                             f"Подрядчик «{contractor.name}» выполнил работу {pattern_text}.\n"
                             f"Дата: {alert_date}"
                         ),
-                        "created_at": datetime.now(),
+                        "created_at": business_now(),
                     }
                 )
 
@@ -256,7 +257,7 @@ class AlertService(BaseService):
                             f"Объект: {housing.name}\n"
                             f"Просроченных работ: {len(overdue_items)}"
                         ),
-                        "created_at": datetime.now(),
+                        "created_at": business_now(),
                     }
                 )
 
@@ -281,7 +282,7 @@ class AlertService(BaseService):
                             f"Для корпуса «{housing.name}» не задана техпоследовательность.\n"
                             f"Автогенерация план-наряда невозможна."
                         ),
-                        "created_at": datetime.now(),
+                        "created_at": business_now(),
                     }
                 )
 
@@ -292,7 +293,7 @@ class AlertService(BaseService):
         if not alert or alert.acknowledged:
             return False
 
-        hours_since = (datetime.now() - alert.created_at).total_seconds() / 3600
+        hours_since = (business_now() - alert.created_at).total_seconds() / 3600
         rules = ESCALATION_RULES.get(alert.alert_type, [])
 
         for i, (hours_needed, next_role) in enumerate(rules):
@@ -301,7 +302,7 @@ class AlertService(BaseService):
             # already reached that level — note the default level is 1, not 0.
             if hours_since >= hours_needed and alert.escalation_level <= i + 1:
                 alert.escalation_level = i + 2
-                alert.escalated_at = datetime.now()
+                alert.escalated_at = business_now()
                 alert.recipient_role = next_role
                 alert.message = f"Эскалация → {next_role}\n\n{alert.message}"
                 await self.alert_manager.db.commit()
@@ -313,7 +314,7 @@ class AlertService(BaseService):
     async def run_escalation_check(self) -> int:
         unacked = await self.alert_manager.search(acknowledged=False)
         escalated = 0
-        now = datetime.now()
+        now = business_now()
 
         for alert in unacked:
             rules = ESCALATION_RULES.get(alert.alert_type, [])
@@ -340,7 +341,7 @@ class AlertService(BaseService):
                 alert_id,
                 {
                     "acknowledged": True,
-                    "acknowledged_at": datetime.now(),
+                    "acknowledged_at": business_now(),
                     "acknowledged_by": user_id,
                 },
             )

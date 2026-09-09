@@ -8,6 +8,7 @@ from fastapi import Depends
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.utils.business_time import business_today
 from src.api.schemes import NamedEntitySchema
 from src.config.postgres.db_config import get_session
 from src.models import managers
@@ -101,7 +102,7 @@ class WorkforceService(BaseService):
         days: int,
         construction_object_id: Optional[UUID] = None,
     ) -> Dict[UUID, float]:
-        since = date.today() - timedelta(days=days)
+        since = business_today() - timedelta(days=days)
         q = (
             select(HeadcountFact.work_id, func.avg(HeadcountFact.count).label("avg"))
             .where(HeadcountFact.project_id == project_id, HeadcountFact.fact_date >= since)
@@ -357,7 +358,7 @@ class WorkforceService(BaseService):
         )
 
     async def calc_forecast(self, project_id: UUID) -> ForecastResponse:
-        today = date.today()
+        today = business_today()
         project = await self.wf_project_manager.get_by_id(project_id)
         objects = await self.wf_project_object_manager.search(project_id=project_id)
         obj_map = {o.id: o for o in objects}
@@ -438,7 +439,7 @@ class WorkforceService(BaseService):
         return ForecastResponse(project_id=project_id, rows=rows)
 
     async def calc_object_contractors(self, construction_object_id: UUID) -> List[ContractorHeadcountRow]:
-        today = date.today()
+        today = business_today()
         period = today.replace(day=1)
         since = today - timedelta(days=30)
 
@@ -491,7 +492,7 @@ class WorkforceService(BaseService):
         threshold_pct: float = 50.0,
         min_objects: int = 3,
     ) -> SystemProblemsResponse:
-        today = date.today()
+        today = business_today()
         since = today - timedelta(days=30)
 
         fact_q = (
@@ -566,7 +567,7 @@ class WorkforceService(BaseService):
         return SystemProblemsResponse(threshold_pct=threshold_pct, min_objects=min_objects, problems=problems)
 
     async def calc_contractor_rating(self) -> List[ContractorRatingRow]:
-        today = date.today()
+        today = business_today()
         since_3m = today - timedelta(days=90)
         contractors = await self.contractor_manager.search()
 
@@ -621,7 +622,7 @@ class WorkforceService(BaseService):
         return rows
 
     async def check_challenge_checkpoints(self, challenge_id: UUID) -> int:
-        today = date.today()
+        today = business_today()
         challenge = await self.wf_challenge_manager.get_by_id(challenge_id)
         if not challenge:
             return 0
@@ -681,7 +682,7 @@ class WorkforceService(BaseService):
         return updated
 
     async def scan_violations(self) -> ViolationScanResult:
-        today = date.today()
+        today = business_today()
         projects = await self.wf_project_manager.search()
         new_violations_data = []
 
@@ -746,7 +747,7 @@ class WorkforceService(BaseService):
         return ViolationScanResult(created=len(new_violations_data), violations=[])
 
     async def auto_escalate_violations(self) -> int:
-        today = date.today()
+        today = business_today()
         violations = await self.wf_violation_manager.search(resolved=False)
         escalated_count = 0
 

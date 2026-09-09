@@ -301,3 +301,22 @@ async def test_endpoints_are_callable(client, async_test_session):
     assert nightly.json()["data"]["housings"] == 1
     assert transfer.status_code == 200
     assert "transferred" in transfer.json()["data"]
+
+
+async def test_nightly_never_forces_over_an_existing_day(async_test_session):
+    """a day someone already built and confirmed must survive the night —
+    the job only fills empty days, so the generate call must not carry force=True."""
+    await _sequence(async_test_session)
+    generate = AsyncMock(return_value=([], []))
+
+    with (
+        patch(
+            "src.services.task.service.SyncReportService.sync_work_facts",
+            new=AsyncMock(return_value={"work_facts": 0}),
+        ),
+        patch("src.services.task.service.AutogenerationService.generate_daily_plan", new=generate),
+    ):
+        await TaskService(async_test_session).run_nightly_plan(target_date=DAY, housing_raport_id=RAPORT_HOUSING)
+
+    assert generate.call_args is not None
+    assert generate.call_args.kwargs["force"] is False
