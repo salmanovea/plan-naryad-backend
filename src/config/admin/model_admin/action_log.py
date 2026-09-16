@@ -32,6 +32,12 @@ class ActionLogAdmin(BaseAdmin, model=ActionLog):  # type: ignore[call-arg]
         ActionLog.actor,
         ActionLog.payload,
     ]
-    column_searchable_list = [ActionLog.action, ActionLog.actor]
+    column_searchable_list = [
+        ActionLog.action,
+        ActionLog.actor,
+        ActionLog.entity_type,
+        ActionLog.entity_id,
+        ActionLog.created_at,
+    ]
     column_sortable_list = [ActionLog.created_at, ActionLog.action]
     column_default_sort = [("created_at", True)]

@@ -12,22 +12,22 @@ class WorkFactAdmin(BaseAdmin, model=WorkFact):  # type: ignore[call-arg]
     column_list = [
         WorkFact.id,
         WorkFact.work_date,
-        WorkFact.housing_id,
-        WorkFact.section_id,
-        WorkFact.floor_id,
-        WorkFact.work_id,
-        WorkFact.contractor_id,
+        WorkFact.housing,
+        WorkFact.section,
+        WorkFact.floor,
+        WorkFact.work,
+        WorkFact.contractor,
         WorkFact.percent,
         WorkFact.source,
     ]
     column_details_list = [
         WorkFact.id,
         WorkFact.work_date,
-        WorkFact.housing_id,
-        WorkFact.section_id,
-        WorkFact.floor_id,
-        WorkFact.work_id,
-        WorkFact.contractor_id,
+        WorkFact.housing,
+        WorkFact.section,
+        WorkFact.floor,
+        WorkFact.work,
+        WorkFact.contractor,
         WorkFact.volume,
         WorkFact.percent,
         WorkFact.unit,
@@ -50,6 +50,18 @@ class WorkFactAdmin(BaseAdmin, model=WorkFact):  # type: ignore[call-arg]
         WorkFact.percent,
         WorkFact.source,
     ]
-    column_searchable_list = [WorkFact.submitted_by, WorkFact.raport_id]
+    # contractor is nullable (Raport rarely attributes facts) — id only.
+    column_searchable_list = [
+        WorkFact.work_date,
+        WorkFact.housing_id,
+        WorkFact.section_id,
+        WorkFact.floor_id,
+        WorkFact.work_id,
+        WorkFact.contractor_id,
+        "housing.name",
+        "work.name",
+        WorkFact.submitted_by,
+        WorkFact.raport_id,
+    ]
     column_sortable_list = [WorkFact.work_date, WorkFact.percent]
     column_default_sort = [("work_date", True)]

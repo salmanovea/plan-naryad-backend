@@ -86,6 +86,9 @@ class PlanItem(IDMixin, Base):
     source: Mapped[str] = mapped_column(String(20), default=PlanSource.AUTO)
     status: Mapped[str] = mapped_column(String(20), default=PlanStatus.DRAFT)
 
+    def __str__(self) -> str:
+        return f"{self.date} · {self.status}"
+
     housing: Mapped["Housing"] = relationship()  # type: ignore[name-defined]
     section: Mapped["Section"] = relationship()  # type: ignore[name-defined]
     floor: Mapped["Floor"] = relationship()  # type: ignore[name-defined]

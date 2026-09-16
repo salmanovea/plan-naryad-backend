@@ -14,8 +14,8 @@ class AlertAdmin(BaseAdmin, model=Alert):  # type: ignore[call-arg]
         Alert.date,
         Alert.alert_type,
         Alert.level,
-        Alert.housing_id,
-        Alert.contractor_id,
+        Alert.housing,
+        Alert.contractor,
         Alert.acknowledged,
         Alert.escalation_level,
         Alert.created_at,
@@ -25,8 +25,8 @@ class AlertAdmin(BaseAdmin, model=Alert):  # type: ignore[call-arg]
         Alert.date,
         Alert.alert_type,
         Alert.level,
-        Alert.housing_id,
-        Alert.contractor_id,
+        Alert.housing,
+        Alert.contractor,
         Alert.recipient_id,
         Alert.recipient_role,
         Alert.message,
@@ -44,6 +44,16 @@ class AlertAdmin(BaseAdmin, model=Alert):  # type: ignore[call-arg]
         Alert.message,
         Alert.acknowledged,
     ]
-    column_searchable_list = [Alert.alert_type, Alert.acknowledged_by]
+    # housing / contractor are nullable — ids only, a dotted join would hide
+    # system-wide alerts from every search.
+    column_searchable_list = [
+        Alert.date,
+        Alert.alert_type,
+        Alert.level,
+        Alert.housing_id,
+        Alert.contractor_id,
+        Alert.recipient_id,
+        Alert.acknowledged_by,
+    ]
     column_sortable_list = [Alert.date, Alert.level, Alert.created_at]
     column_default_sort = [("created_at", True)]

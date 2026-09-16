@@ -14,11 +14,11 @@ class PlanItemAdmin(BaseAdmin, model=PlanItem):  # type: ignore[call-arg]
     column_list = [
         PlanItem.id,
         PlanItem.date,
-        PlanItem.housing_id,
-        PlanItem.section_id,
-        PlanItem.floor_id,
-        PlanItem.work_id,
-        PlanItem.contractor_id,
+        PlanItem.housing,
+        PlanItem.section,
+        PlanItem.floor,
+        PlanItem.work,
+        PlanItem.contractor,
         PlanItem.status,
         PlanItem.source,
         PlanItem.rs_confirmed,
@@ -26,11 +26,11 @@ class PlanItemAdmin(BaseAdmin, model=PlanItem):  # type: ignore[call-arg]
     column_details_list = [
         PlanItem.id,
         PlanItem.date,
-        PlanItem.housing_id,
-        PlanItem.section_id,
-        PlanItem.floor_id,
-        PlanItem.work_id,
-        PlanItem.contractor_id,
+        PlanItem.housing,
+        PlanItem.section,
+        PlanItem.floor,
+        PlanItem.work,
+        PlanItem.contractor,
         PlanItem.source_percent,
         PlanItem.work_cell_contractor_id,
         PlanItem.work_cell_id,
@@ -48,7 +48,21 @@ class PlanItemAdmin(BaseAdmin, model=PlanItem):  # type: ignore[call-arg]
         PlanItem.source,
         PlanItem.rs_confirmed,
     ]
-    column_searchable_list = [PlanItem.rs_confirmed_by]
+    # UUIDs and dates are searchable too: sqladmin casts every field to text before
+    # the ILIKE. Dotted paths join the relation — INNER JOIN, so only non-nullable ones.
+    column_searchable_list = [
+        PlanItem.date,
+        PlanItem.housing_id,
+        PlanItem.section_id,
+        PlanItem.floor_id,
+        PlanItem.work_id,
+        PlanItem.contractor_id,
+        "housing.name",
+        "work.name",
+        "contractor.name",
+        PlanItem.status,
+        PlanItem.rs_confirmed_by,
+    ]
     column_sortable_list = [PlanItem.date, PlanItem.status]
     column_default_sort = [("date", True)]
 
@@ -61,18 +75,18 @@ class TechSequenceItemAdmin(BaseAdmin, model=TechSequenceItem):  # type: ignore[
 
     column_list = [
         TechSequenceItem.id,
-        TechSequenceItem.housing_id,
-        TechSequenceItem.section_id,
-        TechSequenceItem.work_id,
+        TechSequenceItem.housing,
+        TechSequenceItem.section,
+        TechSequenceItem.work,
         TechSequenceItem.order,
         TechSequenceItem.floor_sorting_direction,
         TechSequenceItem.source,
     ]
     column_details_list = [
         TechSequenceItem.id,
-        TechSequenceItem.housing_id,
-        TechSequenceItem.section_id,
-        TechSequenceItem.work_id,
+        TechSequenceItem.housing,
+        TechSequenceItem.section,
+        TechSequenceItem.work,
         TechSequenceItem.order,
         TechSequenceItem.depends_on,
         TechSequenceItem.depends_on_ss,
@@ -90,6 +104,14 @@ class TechSequenceItemAdmin(BaseAdmin, model=TechSequenceItem):  # type: ignore[
         TechSequenceItem.order,
         TechSequenceItem.floor_sorting_direction,
         TechSequenceItem.source,
+    ]
+    # section is nullable (housing-wide rows) — id only, a dotted join would hide them.
+    column_searchable_list = [
+        TechSequenceItem.housing_id,
+        TechSequenceItem.section_id,
+        TechSequenceItem.work_id,
+        "housing.name",
+        "work.name",
     ]
     column_sortable_list = [TechSequenceItem.order]
     column_default_sort = [("order", False)]
@@ -111,5 +133,11 @@ class ContractorFloorLimitAdmin(BaseAdmin, model=ContractorFloorLimit):  # type:
         ContractorFloorLimit.contractor,
         ContractorFloorLimit.work,
         ContractorFloorLimit.floors_limit,
+    ]
+    # contractor is nullable by design (work-wide limit rows) — id only.
+    column_searchable_list = [
+        ContractorFloorLimit.contractor_id,
+        ContractorFloorLimit.work_id,
+        "work.name",
     ]
     column_sortable_list = [ContractorFloorLimit.floors_limit]
