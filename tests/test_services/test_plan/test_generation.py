@@ -531,3 +531,135 @@ async def test_partial_generation_still_reports_missing_contractors(async_test_s
 
     assert {(i.floor_id) for i in items} == {FLOOR_1}
     assert any("Не назначен подрядчик" in r for r in reasons)
+
+
+async def test_housing_level_predecessor_gates_floor_works(async_test_session):
+    """The Gantt gives works different floor sets: the foundation slab lives on the «-»
+    pseudo-floor only, its successors on real floors. The dependency is checked at the
+    nearest scope where the predecessor exists — done there unlocks every floor."""
+    await _clear_plan(async_test_session)
+    await _sequence(
+        async_test_session,
+        [
+            {"work_id": WORK_A, "order": 1},
+            {"work_id": WORK_B, "order": 2, "depends_on": [WORK_A]},
+        ],
+    )
+
+    # WORK_A (foundation) exists only on section 2 — nowhere near WORK_B's floors.
+    cells = {
+        CellKey(SECTION_2, FLOOR_1, WORK_A, CONTRACTOR): _state("100"),
+        CellKey(SECTION_1, FLOOR_1, WORK_B, CONTRACTOR): _state("0"),
+        CellKey(SECTION_1, FLOOR_2, WORK_B, CONTRACTOR): _state("0"),
+    }
+    service = _service(
+        async_test_session,
+        cells=cells,
+        assignments=_assign(
+            AssignmentKey(SECTION_1, FLOOR_1, WORK_B),
+            AssignmentKey(SECTION_1, FLOOR_2, WORK_B),
+        ),
+    )
+
+    items, reasons = await service.generate_daily_plan(HOUSING, TARGET)
+
+    assert reasons == []
+    assert {(i.floor_id, i.work_id) for i in items} == {(FLOOR_1, WORK_B), (FLOOR_2, WORK_B)}
+
+
+async def test_housing_level_predecessor_still_blocks_until_done(async_test_session):
+    """The cascade must not weaken the gate: an unfinished housing-level predecessor
+    keeps every floor of the successor closed."""
+    await _clear_plan(async_test_session)
+    await _sequence(
+        async_test_session,
+        [
+            {"work_id": WORK_A, "order": 1},
+            {"work_id": WORK_B, "order": 2, "depends_on": [WORK_A]},
+        ],
+    )
+
+    cells = {
+        CellKey(SECTION_2, FLOOR_1, WORK_A, CONTRACTOR): _state("60"),
+        CellKey(SECTION_1, FLOOR_1, WORK_B, CONTRACTOR): _state("0"),
+    }
+    service = _service(
+        async_test_session,
+        cells=cells,
+        assignments=_assign(
+            AssignmentKey(SECTION_2, FLOOR_1, WORK_A),
+            AssignmentKey(SECTION_1, FLOOR_1, WORK_B),
+        ),
+    )
+
+    items, _ = await service.generate_daily_plan(HOUSING, TARGET)
+
+    # Section 2 has no floors in the fixtures, so WORK_A itself cannot be planned —
+    # the point here is that WORK_B stays closed while its predecessor is at 60%.
+    assert WORK_B not in {i.work_id for i in items}
+    assert items == []
+
+
+async def test_same_cell_rule_still_wins_when_the_predecessor_has_the_cell(async_test_session):
+    """Where the predecessor does have a cell on the floor, the strict per-floor rule
+    applies: done on another floor of the section does not unlock this one."""
+    await _clear_plan(async_test_session)
+    await _sequence(
+        async_test_session,
+        [
+            {"work_id": WORK_A, "order": 1},
+            {"work_id": WORK_B, "order": 2, "depends_on": [WORK_A]},
+        ],
+    )
+
+    cells = {
+        CellKey(SECTION_1, FLOOR_1, WORK_A, CONTRACTOR): _state("100"),
+        CellKey(SECTION_1, FLOOR_2, WORK_A, CONTRACTOR): _state("40"),
+        CellKey(SECTION_1, FLOOR_1, WORK_B, CONTRACTOR): _state("0"),
+        CellKey(SECTION_1, FLOOR_2, WORK_B, CONTRACTOR): _state("0"),
+    }
+    service = _service(
+        async_test_session,
+        cells=cells,
+        assignments=_assign(
+            AssignmentKey(SECTION_1, FLOOR_2, WORK_A),
+            AssignmentKey(SECTION_1, FLOOR_1, WORK_B),
+            AssignmentKey(SECTION_1, FLOOR_2, WORK_B),
+        ),
+    )
+
+    items, _ = await service.generate_daily_plan(HOUSING, TARGET)
+
+    planned = {(i.floor_id, i.work_id) for i in items}
+    assert (FLOOR_1, WORK_B) in planned  # предшественник на эт.1 закрыт
+    assert (FLOOR_2, WORK_B) not in planned  # на эт.2 — нет, чужой этаж не открывает
+    assert (FLOOR_2, WORK_A) in planned  # сам предшественник доделывает эт.2
+
+
+async def test_start_start_predecessor_cascades_too(async_test_session):
+    """SS-links follow the same cascade: progress at the nearest scope unlocks."""
+    await _clear_plan(async_test_session)
+    await _sequence(
+        async_test_session,
+        [
+            {"work_id": WORK_A, "order": 1},
+            {"work_id": WORK_B, "order": 2, "depends_on_ss": [WORK_A]},
+        ],
+    )
+
+    cells = {
+        CellKey(SECTION_2, FLOOR_1, WORK_A, CONTRACTOR): _state("30"),
+        CellKey(SECTION_1, FLOOR_1, WORK_B, CONTRACTOR): _state("0"),
+    }
+    service = _service(
+        async_test_session,
+        cells=cells,
+        assignments=_assign(
+            AssignmentKey(SECTION_2, FLOOR_1, WORK_A),
+            AssignmentKey(SECTION_1, FLOOR_1, WORK_B),
+        ),
+    )
+
+    items, _ = await service.generate_daily_plan(HOUSING, TARGET)
+
+    assert (SECTION_1, FLOOR_1, WORK_B) in {(i.section_id, i.floor_id, i.work_id) for i in items}
