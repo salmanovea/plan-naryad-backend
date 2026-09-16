@@ -29,8 +29,9 @@ class AppConfig(BaseSettings):
 
     # Business logic limits
     max_items_per_contractor: int = 10
-    # Floors of one work a single contractor may get in one day plan when
-    # `contractor_floor_limits` holds no row for them (decision Р8).
+    # Positions a single contractor may get in one day plan when
+    # `contractor_position_limits` holds no row for them (decision Р8; the ТЗ
+    # limit is per contractor). The env name keeps its historical spelling.
     default_floor_limit: int = 4
     # Until this hour (business time, see app_timezone) an unscheduled generation targets
     # today; later it targets tomorrow — today's plan has already gone out (Р3).

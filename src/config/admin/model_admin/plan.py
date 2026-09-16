@@ -1,7 +1,7 @@
 from src.config.admin.categories import CATEGORY_PLAN
 from src.config.admin.model_admin.base_admin import BaseAdmin
 from src.models.dbo.tables.plan import PlanItem
-from src.models.dbo.tables.settings import ContractorFloorLimit
+from src.models.dbo.tables.settings import ContractorPositionLimit
 from src.models.dbo.tables.work import TechSequenceItem
 
 
@@ -117,27 +117,23 @@ class TechSequenceItemAdmin(BaseAdmin, model=TechSequenceItem):  # type: ignore[
     column_default_sort = [("order", False)]
 
 
-class ContractorFloorLimitAdmin(BaseAdmin, model=ContractorFloorLimit):  # type: ignore[call-arg]
+class ContractorPositionLimitAdmin(BaseAdmin, model=ContractorPositionLimit):  # type: ignore[call-arg]
     category = CATEGORY_PLAN
-    name = "Лимит этажей"
-    name_plural = "Лимиты этажей (Р8)"
+    name = "Лимит позиций подрядчика"
+    name_plural = "Лимиты позиций (Р8)"
     icon = "fa-solid fa-arrow-up-9-1"
 
     column_list = [
-        ContractorFloorLimit.id,
-        ContractorFloorLimit.contractor,
-        ContractorFloorLimit.work,
-        ContractorFloorLimit.floors_limit,
+        ContractorPositionLimit.id,
+        ContractorPositionLimit.contractor,
+        ContractorPositionLimit.positions_limit,
     ]
     form_columns = [
-        ContractorFloorLimit.contractor,
-        ContractorFloorLimit.work,
-        ContractorFloorLimit.floors_limit,
+        ContractorPositionLimit.contractor,
+        ContractorPositionLimit.positions_limit,
     ]
-    # contractor is nullable by design (work-wide limit rows) — id only.
     column_searchable_list = [
-        ContractorFloorLimit.contractor_id,
-        ContractorFloorLimit.work_id,
-        "work.name",
+        ContractorPositionLimit.contractor_id,
+        "contractor.name",
     ]
-    column_sortable_list = [ContractorFloorLimit.floors_limit]
+    column_sortable_list = [ContractorPositionLimit.positions_limit]
