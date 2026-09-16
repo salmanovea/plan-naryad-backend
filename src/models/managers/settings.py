@@ -1,13 +1,13 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.models.dbo.tables.settings import ActionLog, ContractorFloorLimit
+from src.models.dbo.tables.settings import ActionLog, ContractorPositionLimit
 from src.models.managers.common import BaseManager
 
 
-class ContractorFloorLimitManager(BaseManager[ContractorFloorLimit]):
-    """Data access for ContractorFloorLimit entities."""
+class ContractorPositionLimitManager(BaseManager[ContractorPositionLimit]):
+    """Data access for ContractorPositionLimit entities."""
 
-    entity = ContractorFloorLimit
+    entity = ContractorPositionLimit
 
     def __init__(self, db: AsyncSession):
         super().__init__(db)

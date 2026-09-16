@@ -282,7 +282,7 @@ async def test_section_plan_overrides_the_housing_one(async_test_session):
 
 
 async def test_floor_limit_caps_one_contractor(async_test_session):
-    """Default limit is 4 floors of one work per contractor (Р8)."""
+    """Default limit is 4 positions per contractor in one day plan (Р8, ТЗ)."""
     await _clear_plan(async_test_session)
     await _sequence(async_test_session, [{"work_id": WORK_A, "order": 1}])
 
@@ -307,6 +307,49 @@ async def test_floor_limit_caps_one_contractor(async_test_session):
     items, _ = await service.generate_daily_plan(HOUSING, TARGET, section_id=SECTION_1)
 
     assert len(items) == 4
+
+
+async def test_limit_counts_the_contractor_not_the_work(async_test_session):
+    """The ТЗ cap is per contractor: 4 floors of «Пол» leave no room for «Стены» at the
+    same contractor — while another contractor still gets their positions."""
+    await _clear_plan(async_test_session)
+    await _sequence(
+        async_test_session,
+        [
+            {"work_id": WORK_A, "order": 1},
+            {"work_id": WORK_B, "order": 2},
+        ],
+    )
+
+    floors = managers.FloorManager(async_test_session)
+    extra_ids = []
+    for number in range(3, 5):
+        rows = await floors.search(section_id=SECTION_1, floor_number=number)
+        row = (
+            rows[0]
+            if rows
+            else await floors.create({"section_id": SECTION_1, "floor_number": number, "name": f"Этаж {number}"})
+        )
+        extra_ids.append(row.id)
+    four_floors = [FLOOR_1, FLOOR_2, *extra_ids]
+
+    cells = {CellKey(SECTION_1, f, WORK_A, CONTRACTOR): _state("0") for f in four_floors}
+    cells[CellKey(SECTION_1, FLOOR_1, WORK_B, CONTRACTOR)] = _state("0")
+    cells[CellKey(SECTION_1, FLOOR_2, WORK_B, CONTRACTOR_2)] = _state("0")
+
+    assignments = _assign(*[AssignmentKey(SECTION_1, f, WORK_A) for f in four_floors])
+    assignments[AssignmentKey(SECTION_1, FLOOR_1, WORK_B)] = [CONTRACTOR]
+    assignments[AssignmentKey(SECTION_1, FLOOR_2, WORK_B)] = [CONTRACTOR_2]
+
+    service = _service(async_test_session, cells=cells, assignments=assignments)
+
+    items, _ = await service.generate_daily_plan(HOUSING, TARGET, section_id=SECTION_1)
+
+    mine = [i for i in items if i.contractor_id == CONTRACTOR]
+    others = [i for i in items if i.contractor_id == CONTRACTOR_2]
+    assert len(mine) == 4  # 4 «Пола» съели весь лимит
+    assert all(i.work_id == WORK_A for i in mine)  # «Стены» этому подрядчику не достались
+    assert len(others) == 1  # у второго подрядчика свой счётчик
 
 
 async def test_missing_assignment_reports_the_spec_wording(async_test_session):
@@ -663,3 +706,30 @@ async def test_start_start_predecessor_cascades_too(async_test_session):
     items, _ = await service.generate_daily_plan(HOUSING, TARGET)
 
     assert (SECTION_1, FLOOR_1, WORK_B) in {(i.section_id, i.floor_id, i.work_id) for i in items}
+
+
+async def test_contractor_own_limit_row_overrides_the_default(async_test_session):
+    """A row in contractor_position_limits caps that contractor tighter than the default."""
+    await _clear_plan(async_test_session)
+    await _sequence(async_test_session, [{"work_id": WORK_A, "order": 1}])
+
+    limits = managers.ContractorPositionLimitManager(async_test_session)
+    for existing in await limits.search(contractor_id=CONTRACTOR):
+        await limits.delete_by_id(existing.id)
+    await limits.create({"contractor_id": CONTRACTOR, "positions_limit": 1})
+
+    service = _service(
+        async_test_session,
+        cells={
+            CellKey(SECTION_1, FLOOR_1, WORK_A, CONTRACTOR): _state("0"),
+            CellKey(SECTION_1, FLOOR_2, WORK_A, CONTRACTOR): _state("0"),
+        },
+        assignments=_assign(
+            AssignmentKey(SECTION_1, FLOOR_1, WORK_A),
+            AssignmentKey(SECTION_1, FLOOR_2, WORK_A),
+        ),
+    )
+
+    items, _ = await service.generate_daily_plan(HOUSING, TARGET, section_id=SECTION_1)
+
+    assert len(items) == 1

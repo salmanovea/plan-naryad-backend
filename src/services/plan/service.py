@@ -83,7 +83,7 @@ class AutogenerationService(BaseService):
         self.work_set_manager = managers.WorkSetManager(db)
         self.tech_sequence_manager = managers.TechSequenceItemManager(db)
         self.contractor_manager = managers.ContractorManager(db)
-        self.floor_limit_manager = managers.ContractorFloorLimitManager(db)
+        self.position_limit_manager = managers.ContractorPositionLimitManager(db)
         self.action_log_manager = managers.ActionLogManager(db)
         self.report_cells = ReportCellsService(db)
         self.contractor_works = ContractorWorksService(db)
@@ -551,23 +551,15 @@ class AutogenerationService(BaseService):
 
     # ── Floor limits ──────────────────────────────────────────────────────────
 
-    async def _floor_limits(self) -> dict[tuple[Optional[UUID], UUID], int]:
-        """`(contractor_id | None, work_id) → floors_limit` from contractor_floor_limits."""
-        rows = await self.floor_limit_manager.search()
-        return {(row.contractor_id, row.work_id): row.floors_limit for row in rows}
+    async def _position_limits(self) -> dict[UUID, int]:
+        """`contractor_id → positions_limit` from contractor_position_limits (Р8)."""
+        rows = await self.position_limit_manager.search()
+        return {row.contractor_id: row.positions_limit for row in rows}
 
     @staticmethod
-    def _limit_for(
-        limits: dict[tuple[Optional[UUID], UUID], int],
-        contractor_id: UUID,
-        work_id: UUID,
-    ) -> int:
-        """Cascade from Р8: exact match, then the work-wide row, then the default."""
-        if (contractor_id, work_id) in limits:
-            return limits[(contractor_id, work_id)]
-        if (None, work_id) in limits:
-            return limits[(None, work_id)]
-        return app_config.default_floor_limit
+    def _limit_for(limits: dict[UUID, int], contractor_id: UUID) -> int:
+        """The contractor's own row, else the config default — the ТЗ limit is per contractor."""
+        return limits.get(contractor_id, app_config.default_floor_limit)
 
     # ── Generation ────────────────────────────────────────────────────────────
 
@@ -633,12 +625,12 @@ class AutogenerationService(BaseService):
         every_work = set(housing_nodes) | {w for nodes in section_nodes.values() for w in nodes}
         slice_ = await self.report_cells.get_housing_slice(housing_id, work_ids=list(every_work))
         assignments = await self.contractor_works.get_housing_assignments(housing_id)
-        limits = await self._floor_limits()
+        limits = await self._position_limits()
 
         works = {w.id: w for w in await self.work_manager.get_by_ids(list(every_work))}
 
         plan_rows: list[dict] = []
-        floors_taken: dict[tuple[UUID, UUID], int] = {}
+        floors_taken: dict[UUID, int] = {}
         missing_contractor: list[str] = []
 
         for section in sections:
@@ -670,8 +662,8 @@ class AutogenerationService(BaseService):
                         )
                         continue
 
-                    limit = self._limit_for(limits, contractor_id, work_id)
-                    taken = floors_taken.get((contractor_id, work_id), 0)
+                    limit = self._limit_for(limits, contractor_id)
+                    taken = floors_taken.get(contractor_id, 0)
                     if taken >= limit:
                         continue
 
@@ -691,7 +683,7 @@ class AutogenerationService(BaseService):
                             "status": PlanStatus.DRAFT,
                         }
                     )
-                    floors_taken[(contractor_id, work_id)] = taken + 1
+                    floors_taken[contractor_id] = taken + 1
 
         if existing and not plan_rows and not slice_.cells:
             reasons.append(

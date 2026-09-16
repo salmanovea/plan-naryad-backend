@@ -13,43 +13,23 @@ from src.models.dbo.base_model import Base
 
 if TYPE_CHECKING:
     from src.models.dbo.tables.contractor import Contractor
-    from src.models.dbo.tables.work import Work
 
 
-class ContractorFloorLimit(IDMixin, Base):
-    """How many floors of one work may land on one contractor in a single day plan.
+class ContractorPositionLimit(IDMixin, Base):
+    """Cap on one contractor's positions in a single day plan (Р8; the ТЗ limit is per
+    contractor). No row means `DEFAULT_FLOOR_LIMIT` from settings applies to everyone."""
 
-    Resolution cascade, most specific first:
-      1. row matching both contractor and work
-      2. row for the work with `contractor_id IS NULL`
-      3. `DEFAULT_FLOOR_LIMIT` from settings
-    """
+    __tablename__ = "contractor_position_limits"
 
-    __tablename__ = "contractor_floor_limits"
-
-    contractor_id: Mapped[Optional[UUID]] = mapped_column(
-        ForeignKey("contractors.id", name="fk_contractor_floor_limits_contractor_id"),
-        index=True,
-    )
-    work_id: Mapped[UUID] = mapped_column(
-        ForeignKey("works.id", name="fk_contractor_floor_limits_work_id"),
+    contractor_id: Mapped[UUID] = mapped_column(
+        ForeignKey("contractors.id", name="fk_contractor_position_limits_contractor_id"),
         nullable=False,
-        index=True,
     )
-    floors_limit: Mapped[int] = mapped_column(Integer, nullable=False)
+    positions_limit: Mapped[int] = mapped_column(Integer, nullable=False)
 
-    contractor: Mapped[Optional["Contractor"]] = relationship()  # type: ignore[name-defined]
-    work: Mapped["Work"] = relationship()  # type: ignore[name-defined]
+    contractor: Mapped["Contractor"] = relationship()  # type: ignore[name-defined]
 
-    __table_args__ = (
-        Index(
-            "uq_contractor_floor_limits_key",
-            "contractor_id",
-            "work_id",
-            unique=True,
-            postgresql_nulls_not_distinct=True,
-        ),
-    )
+    __table_args__ = (Index("uq_contractor_position_limits_contractor", "contractor_id", unique=True),)
 
 
 class ActionType(str, Enum):

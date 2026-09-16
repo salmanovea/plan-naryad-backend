@@ -21,7 +21,7 @@ from src.models.dbo.tables.reconciliation import (  # noqa: F401
     ReconciliationResult,
     ReconciliationStatus,
 )
-from src.models.dbo.tables.settings import ActionLog, ActionType, ContractorFloorLimit  # noqa: F401
+from src.models.dbo.tables.settings import ActionLog, ActionType, ContractorPositionLimit  # noqa: F401
 from src.models.dbo.tables.work import (  # noqa: F401
     DependencyType,
     FloorSortingDirection,
