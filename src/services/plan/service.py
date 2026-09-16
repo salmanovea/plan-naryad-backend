@@ -484,25 +484,43 @@ class AutogenerationService(BaseService):
                 continue
             if all(state.is_done for state in states):
                 continue
-            if all(self._cell_done(section_id, floor_id, dep, slice_) for dep in node.depends_on):
-                if all(self._cell_started(section_id, floor_id, dep, slice_) for dep in node.depends_on_ss):
+            if all(self._dep_done(section_id, floor_id, dep, slice_) for dep in node.depends_on):
+                if all(self._dep_started(section_id, floor_id, dep, slice_) for dep in node.depends_on_ss):
                     ready.append((node.order, work_id))
         return [work_id for _, work_id in sorted(ready)]
 
     @staticmethod
-    def _cell_done(section_id: UUID, floor_id: UUID, work_id: UUID, slice_: HousingSlice) -> bool:
-        """A work is finished on a cell when every contractor on it is finished.
+    def _dep_states(section_id: UUID, floor_id: UUID, work_id: UUID, slice_: HousingSlice) -> list:
+        """The predecessor's states at the nearest scope where it exists at all.
 
-        Absent from the slice means Raport has no such cell — treated as not finished, so a
-        missing predecessor never unlocks a successor by accident.
+        Works have different floor sets in the Gantt: a foundation slab lives on the «-»
+        pseudo-floor only, while its successors run on floors 1..N. A strict same-cell
+        lookup would block those successors forever, so the cascade is:
+
+          1. the same cell (section + floor) — the strict per-floor rule when it applies;
+          2. the same section, any floor — a per-section predecessor gates its section;
+          3. anywhere in the housing («Весь корпус» included) — a housing-level predecessor.
+
+        An empty answer everywhere means the predecessor has no cells at all — treated as
+        not finished, so a missing predecessor never unlocks a successor by accident.
         """
         states = slice_.states_on(section_id, floor_id, work_id)
+        if not states:
+            states = slice_.states_in_section(section_id, work_id)
+        if not states:
+            states = slice_.states_of_work(work_id)
+        return states
+
+    @classmethod
+    def _dep_done(cls, section_id: UUID, floor_id: UUID, work_id: UUID, slice_: HousingSlice) -> bool:
+        """A finish-to-start predecessor is satisfied when its nearest scope is all done."""
+        states = cls._dep_states(section_id, floor_id, work_id, slice_)
         return bool(states) and all(state.is_done for state in states)
 
-    @staticmethod
-    def _cell_started(section_id: UUID, floor_id: UUID, work_id: UUID, slice_: HousingSlice) -> bool:
-        """A work has started on a cell when any contractor shows progress."""
-        return any(state.percent > 0 for state in slice_.states_on(section_id, floor_id, work_id))
+    @classmethod
+    def _dep_started(cls, section_id: UUID, floor_id: UUID, work_id: UUID, slice_: HousingSlice) -> bool:
+        """A start-to-start predecessor is satisfied when its nearest scope shows progress."""
+        return any(state.percent > 0 for state in cls._dep_states(section_id, floor_id, work_id, slice_))
 
     # ── Sequence scope: a section's own plan wins over the housing-wide one ────
 
