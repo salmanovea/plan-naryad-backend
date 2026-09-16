@@ -4,7 +4,12 @@ from sqladmin import Admin
 from starlette.routing import Route
 
 from src.config.admin.auth import CALLBACK_PATH, build_admin_auth
+from src.config.admin.model_admin.action_log import ActionLogAdmin
+from src.config.admin.model_admin.alert import AlertAdmin
 from src.config.admin.model_admin.contractor import ContractAdmin, ContractorAdmin
+from src.config.admin.model_admin.fact import WorkFactAdmin
+from src.config.admin.model_admin.plan import ContractorFloorLimitAdmin, PlanItemAdmin, TechSequenceItemAdmin
+from src.config.admin.model_admin.reconciliation import DailySummaryAdmin, ReconciliationResultAdmin
 from src.config.admin.model_admin.housing import FloorAdmin, HousingAdmin, SectionAdmin
 from src.config.admin.model_admin.project_structure import (
     ConstructionObjectAdmin,
@@ -59,6 +64,20 @@ def init_admin(app: FastAPI) -> Admin:
 
     # System
     admin.add_view(UserAdmin)
+
+    # Plan-naryad
+    admin.add_view(PlanItemAdmin)
+    admin.add_view(TechSequenceItemAdmin)
+    admin.add_view(ContractorFloorLimitAdmin)
+
+    # Facts & reconciliation
+    admin.add_view(WorkFactAdmin)
+    admin.add_view(ReconciliationResultAdmin)
+    admin.add_view(DailySummaryAdmin)
+    admin.add_view(AlertAdmin)
+
+    # System (read-only audit)
+    admin.add_view(ActionLogAdmin)
 
     # Sync
     admin.add_view(SyncActionsAdmin)
