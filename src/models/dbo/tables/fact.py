@@ -83,6 +83,9 @@ class WorkFact(IDMixin, RaportMixin, Base):
     comment: Mapped[Optional[str]] = mapped_column(Text)
     photo_urls: Mapped[Optional[str]] = mapped_column(Text)
 
+    def __str__(self) -> str:
+        return f"{self.work_date} · {self.percent or 0}%"
+
     housing: Mapped["Housing"] = relationship()  # type: ignore[name-defined]
     section: Mapped["Section"] = relationship()  # type: ignore[name-defined]
     floor: Mapped["Floor"] = relationship()  # type: ignore[name-defined]
