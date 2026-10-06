@@ -1,17 +1,18 @@
-"""Authentication and authorization against the Raport ecosystem.
+"""Authentication and user profiles from the Raport ecosystem.
 
 Self-contained block, meant to be copied into any microservice of the ecosystem: it reads its own
-environment variables, verifies Keycloak tokens locally and asks Raport for the user's groups.
-The host service only wires it into the middleware stack:
+environment variables, verifies Keycloak tokens locally and asks Raport for the user's profile.
+The host service checks business roles and permissions separately and wires the backend into
+the middleware stack:
 
     from src.config.redis import redis
-    from src.external.report.auth import get_report_access_token
+    from src.external.report.auth import get_report_service_token
     from src.middlewares.raport_auth import RaportAuthBackend, on_auth_error, validate_auth_settings
 
     validate_auth_settings()
     app.add_middleware(
         AuthenticationMiddleware,
-        backend=RaportAuthBackend(redis_client=redis, service_token_provider=get_report_access_token),
+        backend=RaportAuthBackend(redis_client=redis, service_token_provider=get_report_service_token),
         on_error=on_auth_error,
     )
 """

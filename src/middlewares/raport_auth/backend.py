@@ -1,14 +1,14 @@
 """The Starlette authentication backend.
 
 Order of work on every request: verify the token locally against Keycloak's keys (no network in
-the common case), resolve the user's permissions through Raport (cached), then check the groups.
-Machine callers — schedulers and other services — are recognised by `azp` and skip the group
-check, because a service account has no business being in a human group.
+the common case), resolve the user's profile through Raport (cached), then check its activity.
+Business roles and operation permissions are checked by the API's access dependency.
+Machine callers have an allowlisted client AND service-account claims and skip profile resolution.
 
 Error codes are deliberate:
 
 * **401** — «the token is missing, expired or forged»: the browser should refresh and retry.
-* **403** — «the token is fine, your groups are not»: refreshing changes nothing.
+* **403** — «the token is fine, Raport refuses the user»: refreshing changes nothing.
 * **503** — «we could not find out»: Raport or Keycloak is down, retry later.
 
 Collapsing 401 and 403 into one code sends the frontend into an endless refresh loop, which is
@@ -16,6 +16,7 @@ precisely what Raport's own API does to its clients today.
 """
 
 import time
+from hashlib import sha256
 from typing import Any, Optional
 
 from starlette.authentication import (
@@ -136,7 +137,7 @@ def extract_token(auth_header: str) -> str:
 
 
 class RaportAuthBackend(AuthenticationBackend):
-    """Bearer authentication against Keycloak's keys plus Raport's permission model."""
+    """Bearer authentication against Keycloak's keys plus Raport's user profile."""
 
     def __init__(
         self,
@@ -148,7 +149,10 @@ class RaportAuthBackend(AuthenticationBackend):
         jwks: JWKSCache = jwks_cache,
     ) -> None:
         self.settings = settings
-        self.cache = AuthCache(redis_client)
+        namespace = sha256(
+            f"{settings.issuer}|{settings.report_base_url}|{settings.auth_authz_mode}".encode()
+        ).hexdigest()[:16]
+        self.cache = AuthCache(redis_client, prefix=f"raport-auth:plan-v2:{namespace}:")
         self.authz = AuthzClient(settings, service_token_provider)
         self.public_routes = set(public_routes)
         self.public_route_prefixes = public_route_prefixes
@@ -174,7 +178,14 @@ class RaportAuthBackend(AuthenticationBackend):
             raise auth_error(f"Сервис авторизации недоступен: {e}", 503)
 
         client_id = claims.get("azp") or claims.get("client_id")
-        if client_id and client_id in self.settings.service_clients:
+        # Service-account username or matching client-id claims mark a machine token;
+        # `azp` alone is insufficient. Client trust is checked against service_clients below.
+        is_machine = client_id and (
+            claims.get("preferred_username") == f"service-account-{client_id}"
+            or claims.get("client_id") == client_id
+            or claims.get("clientId") == client_id
+        )
+        if is_machine and client_id in self.settings.service_clients:
             return AuthCredentials(["authenticated", "service"]), ServiceUser(str(client_id), claims)
 
         keycloak_id = keycloak_id_from(claims)
@@ -184,7 +195,6 @@ class RaportAuthBackend(AuthenticationBackend):
         permissions = await self._permissions(keycloak_id, token, claims)
         user = RaportUser(permissions, claims)
         self._check_active(user)
-        self._check_groups(user)
         return AuthCredentials(["authenticated"]), user
 
     async def _permissions(self, keycloak_id: str, token: str, claims: dict[str, Any]) -> dict[str, Any]:
@@ -219,16 +229,6 @@ class RaportAuthBackend(AuthenticationBackend):
         # `False` blocks, otherwise switching modes would lock everyone out.
         if self.settings.auth_require_active and user.data.get("is_active") is False:
             raise auth_error("Учётная запись отключена в Рапорте.", 403)
-
-    def _check_groups(self, user: RaportUser) -> None:
-        allowed = self.settings.allowed_groups
-        if not allowed:
-            # Startup validation forbids this combination; belt and braces for a hand-built backend.
-            raise auth_error("Список допущенных групп не настроен.", 503)
-        if user.groups & allowed:
-            return
-        log.info(f"User {user.display_name} denied: groups={sorted(user.groups)}, allowed={sorted(allowed)}")
-        raise auth_error("Нет доступа к план-наряду. Обратитесь к администратору Рапорта.", 403)
 
     def _is_public(self, conn: HTTPConnection) -> bool:
         path = conn.scope.get("path", "")
