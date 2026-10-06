@@ -2,6 +2,7 @@ from datetime import timedelta
 
 from fastapi import APIRouter, Depends
 
+from src.api.access import plan_access
 from src.api.schemes import (
     DataResponseSchema,
     ListDataResponseSchema,
@@ -17,7 +18,7 @@ from src.services.dashboard.service import DashboardService, get_dashboard_servi
 from src.utils.business_time import business_today
 from src.utils.helpers import catch_all_exceptions, get_responses
 
-dashboard_router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
+dashboard_router = APIRouter(prefix="/dashboard", tags=["Dashboard"], dependencies=[Depends(plan_access)])
 
 
 @dashboard_router.get("/overview", responses=get_responses(ResponseGroup.ALL_ERRORS))

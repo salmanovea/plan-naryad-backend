@@ -194,3 +194,6 @@ async def client(test_session_maker):
         yield ac
 
     app.dependency_overrides.pop(get_session, None)
+
+
+pytest_plugins = ["tests.fixtures.access"]

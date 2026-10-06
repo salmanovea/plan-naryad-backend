@@ -11,9 +11,9 @@ from src.api.v1.reconciliation.schemes import DailySummarySchema, Reconciliation
 from src.config.postgres.db_config import get_session
 from src.models import managers
 from src.models.dbo.tables.reconciliation import ReconciliationPattern, ReconciliationResult, ReconciliationStatus
+from src.services.access.service import AccessService
 from src.services.common import BaseService, floor_label
 from src.services.report_cells import CellKey, HousingSlice, ReportCellsService
-
 
 DONE_PERCENT = Decimal("100")
 
@@ -27,6 +27,7 @@ def _fraction(percent: Optional[Decimal]) -> Decimal:
 
 class ReconciliationService(BaseService):
     def __init__(self, db: AsyncSession):
+        self.access = AccessService(db)
         self.plan_item_manager = managers.PlanItemManager(db)
         self.work_fact_manager = managers.WorkFactManager(db)
         self.reconciliation_manager = managers.ReconciliationResultManager(db)
@@ -38,6 +39,27 @@ class ReconciliationService(BaseService):
         self.contractor_manager = managers.ContractorManager(db)
         self.construction_object_manager = managers.ConstructionObjectManager(db)
         self.report_cells = ReportCellsService(db)
+
+    async def _authorize_filters(self, filters: dict) -> None:
+        """Validate selectors declared by this domain's operations."""
+        if housing_id := filters.get("housing_id"):
+            await self.access.require_location(housing_id, filters.get("section_id"), filters.get("floor_id"))
+        else:
+            if section_id := filters.get("section_id"):
+                await self.access.require_sections([section_id])
+            if floor_id := filters.get("floor_id"):
+                await self.access.require_floors([floor_id])
+        if contractor_id := filters.get("contractor_id"):
+            await self.access.require_contractors([contractor_id])
+
+        if housing_ids := filters.get("housing_id__in"):
+            await self.access.require_housings(housing_ids)
+        if section_ids := filters.get("section_id__in"):
+            await self.access.require_sections(section_ids)
+        if floor_ids := filters.get("floor_id__in"):
+            await self.access.require_floors(floor_ids)
+        if contractor_ids := filters.get("contractor_id__in"):
+            await self.access.require_contractors(contractor_ids)
 
     @staticmethod
     def _enrich_result(result: ReconciliationResult) -> ReconciliationResultSchema:
@@ -60,6 +82,10 @@ class ReconciliationService(BaseService):
         **filters,
     ) -> Tuple[List[ReconciliationResultSchema], int]:
         """List reconciliation results with denormalized section/floor/etc labels."""
+        await self._authorize_filters(filters)
+        allowed_ids = self.access.result_ids()
+        if allowed_ids is not None:
+            filters["id__in"] = allowed_ids
         query = self.reconciliation_manager.get_enriched_query()
         items = await self.reconciliation_manager.search(
             query=query, order_by=order_by, pagination=pagination, **filters
@@ -80,6 +106,9 @@ class ReconciliationService(BaseService):
         table is paginated on the server, so a filter assembled client-side would only ever
         offer what the current page happens to show.
         """
+        await self._authorize_filters({"housing_id": housing_id})
+        if project_id:
+            await self.access.require_projects([project_id])
         filters: dict = {}
         if housing_id:
             filters["housing_id"] = housing_id
@@ -91,7 +120,7 @@ class ReconciliationService(BaseService):
         if date_to:
             filters["date__lte"] = date_to
 
-        rows = await self.reconciliation_manager.search(**filters)
+        rows = await self.reconciliation_manager.search(**filters, id__in=self.access.result_ids())
         if not rows:
             return {"statuses": [], "patterns": [], "works": [], "sections": [], "floors": [], "contractors": []}
 
@@ -156,6 +185,12 @@ class ReconciliationService(BaseService):
         `project_id` is resolved to the project's housings because the table itself
         only carries `housing_id`. An explicit housing filter wins over the project.
         """
+        if project_id:
+            await self.access.require_projects([project_id])
+        await self._authorize_filters(filters)
+        allowed_ids = self.access.summary_ids()
+        if allowed_ids is not None:
+            filters["id__in"] = allowed_ids
         if project_id and not filters.get("housing_id") and not filters.get("housing_id__in"):
             housing_ids = await self._housings_in_scope(None, project_id)
             filters["housing_id__in"] = housing_ids or [UUID(int=0)]
@@ -168,11 +203,13 @@ class ReconciliationService(BaseService):
 
     async def get_summary(self, summary_id: UUID) -> Optional[DailySummarySchema]:
         """Fetch a single daily summary with the denormalized housing name."""
+        await self.access.require_summaries([summary_id])
         summary = await self.daily_summary_manager.get_enriched_by_id(summary_id)
         return self._enrich_summary(summary) if summary else None
 
     async def get_result(self, result_id: UUID) -> Optional[ReconciliationResultSchema]:
         """Fetch a single reconciliation result with denormalized labels."""
+        await self.access.require_results([result_id])
         result = await self.reconciliation_manager.get_enriched_by_id(result_id)
         return self._enrich_result(result) if result else None
 
@@ -318,6 +355,7 @@ class ReconciliationService(BaseService):
         chessboard is therefore read once per housing, and only for the works that actually
         appear in the range's plans and facts — not all 657 of the sequence.
         """
+        self.access.require_business_write()
         date_to = date_to or date_from
         if date_to < date_from:
             date_from, date_to = date_to, date_from
@@ -329,9 +367,11 @@ class ReconciliationService(BaseService):
         total_summaries = 0
 
         for hid in housing_ids:
-            plans = await self.plan_item_manager.search(housing_id=hid, date__gte=date_from, date__lte=date_to)
+            plans = await self.plan_item_manager.search(
+                housing_id=hid, date__gte=date_from, date__lte=date_to, id__in=self.access.plan_item_ids()
+            )
             facts = await self.work_fact_manager.search(
-                housing_id=hid, work_date__gte=date_from, work_date__lte=date_to
+                housing_id=hid, work_date__gte=date_from, work_date__lte=date_to, id__in=self.access.work_fact_ids()
             )
             if not plans and not facts:
                 continue
@@ -347,8 +387,8 @@ class ReconciliationService(BaseService):
                 facts_by_day.setdefault(fact.work_date, []).append(fact)
 
             for day in days:
-                await self.reconciliation_manager.delete_by_date_and_housing(day, hid)
-                await self.daily_summary_manager.delete_by_date_and_housing(day, hid)
+                await self.reconciliation_manager.delete_by_date_and_housing(day, hid, self.access.result_ids())
+                await self.daily_summary_manager.delete_by_date_and_housing(day, hid, self.access.summary_ids())
 
                 results_data = self._build_results(
                     day, hid, plans_by_day.get(day, []), facts_by_day.get(day, []), slice_
@@ -375,15 +415,21 @@ class ReconciliationService(BaseService):
         project_id: Optional[UUID],
     ) -> list[UUID]:
         """Housings to reconcile: one, all of a project, or every one we know."""
+        if project_id:
+            await self.access.require_projects([project_id])
+        if housing_id:
+            await self.access.require_housings([housing_id])
         if housing_id:
             return [housing_id]
         if project_id:
             objects = await self.construction_object_manager.search(project_id=project_id)
             if not objects:
                 return []
-            housings = await self.housing_manager.search(construction_object_id__in=[o.id for o in objects])
+            housings = await self.housing_manager.search(
+                construction_object_id__in=[o.id for o in objects], id__in=self.access.housing_ids()
+            )
             return [h.id for h in housings]
-        return [h.id for h in await self.housing_manager.search()]
+        return [h.id for h in await self.housing_manager.search(id__in=self.access.housing_ids())]
 
     def _build_results(
         self,

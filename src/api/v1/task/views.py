@@ -9,12 +9,13 @@ from datetime import date
 
 from fastapi import APIRouter, Depends, Query
 
+from src.api.access import plan_access
 from src.api.schemes import DataResponseSchema, ResponseGroup
 from src.services.common import current_actor
 from src.services.task import TaskService, get_task_service
 from src.utils.helpers import catch_all_exceptions, get_responses
 
-task_router = APIRouter(prefix="/tasks", tags=["Scheduled jobs"])
+task_router = APIRouter(prefix="/tasks", tags=["Scheduled jobs"], dependencies=[Depends(plan_access)])
 
 
 @task_router.post(

@@ -5,13 +5,14 @@ data is already in the request scope — the middleware fetched it from Raport w
 token — so this endpoint costs nothing and saves the browser a second base URL and a CORS setup.
 """
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 
+from src.api.access import plan_access
 from src.api.schemes import DataResponseSchema, ResponseGroup
 from src.api.v1.user.schemes import CurrentUserSchema
 from src.utils.helpers import catch_all_exceptions, get_responses
 
-user_router = APIRouter(prefix="/users", tags=["Users"])
+user_router = APIRouter(prefix="/users", tags=["Users"], dependencies=[Depends(plan_access)])
 
 
 @user_router.get(
