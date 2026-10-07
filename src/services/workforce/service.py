@@ -1,31 +1,23 @@
 from collections import defaultdict
 from datetime import date, timedelta
 from decimal import Decimal
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 from uuid import UUID
 
 from fastapi import Depends
-from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.schemes import NamedEntitySchema
 from src.config.postgres.db_config import get_session
 from src.models import managers
+from src.models.dbo import models as m
+from src.models.dbo.tables.project_structure import Project
 from src.models.dbo.tables.workforce import (
     CheckpointStatus,
-    ViolationType,
-    BudgetPeriod,
-    Challenge,
-    ChallengeItem,
-    ContractorAssignment,
-    HeadcountFact,
-    HeadcountPlan,
-    MobilizationCheckpoint,
-    MobilizationPlan,
-    Violation,
     HeadcountNorm,
+    ViolationType,
 )
-from src.models.dbo.tables.project_structure import ConstructionObject, Project
+from src.services.access.service import AccessService
 from src.services.common import BaseService
 from src.services.workforce.schemas import (
     ContractorHeadcountRow,
@@ -43,6 +35,7 @@ from src.services.workforce.schemas import (
     WfProjectOut,
     WorkTypeRow,
 )
+from src.utils.business_time import business_today
 
 
 def _traffic_light(coverage_pct: Optional[float]) -> str:
@@ -70,6 +63,8 @@ def _trend(fact_7d: float, fact_30d: float) -> str:
 
 class WorkforceService(BaseService):
     def __init__(self, db: AsyncSession):
+        self.db = db
+        self.access = AccessService(db)
         self.wf_project_manager = managers.ProjectManager(db)
         self.wf_project_object_manager = managers.ConstructionObjectManager(db)
         self.wf_workforce_norm_manager = managers.HeadcountNormManager(db)
@@ -78,7 +73,8 @@ class WorkforceService(BaseService):
         self.wf_headcount_fact_manager = managers.HeadcountFactManager(db)
         self.wf_headcount_plan_manager = managers.HeadcountPlanManager(db)
         self.contractor_manager = managers.ContractorManager(db)
-        self.work_type_manager = managers.WorkTypeManager(db)
+        # Public DTOs retain the historical 'work_type' key, but work_id now references Work.
+        self.work_type_manager = managers.WorkManager(db)
         self.wf_contractor_assignment_manager = managers.ContractorAssignmentManager(db)
         self.wf_challenge_manager = managers.ChallengeManager(db)
         self.wf_challenge_item_manager = managers.ChallengeItemManager(db)
@@ -87,6 +83,16 @@ class WorkforceService(BaseService):
         self.wf_violation_manager = managers.ViolationManager(db)
         self.article_bdr_manager = managers.ArticleBDRManager(db)
         self.wf_article_mapping_manager = managers.ArticleBDRWorkManager(db)
+
+    async def _authorize_selectors(self, filters: dict[str, Any]) -> None:
+        project_id = filters.get("project_id")
+        object_id = filters.get("construction_object_id")
+        if project_id:
+            await self.access.require_project_object(project_id, object_id)
+        elif object_id:
+            await self.access.require_objects([object_id])
+        if contractor_id := filters.get("contractor_id"):
+            await self.access.require_contractors([contractor_id])
 
     async def _get_work_types_map(self, work_ids: Iterable[UUID]) -> Dict[UUID, NamedEntitySchema]:
         ids = list(set(work_ids))
@@ -101,15 +107,10 @@ class WorkforceService(BaseService):
         days: int,
         construction_object_id: Optional[UUID] = None,
     ) -> Dict[UUID, float]:
-        since = date.today() - timedelta(days=days)
-        q = (
-            select(HeadcountFact.work_id, func.avg(HeadcountFact.count).label("avg"))
-            .where(HeadcountFact.project_id == project_id, HeadcountFact.fact_date >= since)
-            .group_by(HeadcountFact.work_id)
+        since = business_today() - timedelta(days=days)
+        rows = await self.wf_headcount_fact_manager.averages(
+            since, ("work_id",), self.access.headcount_fact_ids(), project_id, construction_object_id
         )
-        if construction_object_id is not None:
-            q = q.where(HeadcountFact.construction_object_id == construction_object_id)
-        rows = await self.wf_headcount_fact_manager.fetch(q, with_scalars=False)
         return {r.work_id: float(r.avg) for r in rows}
 
     async def _get_plans(
@@ -118,12 +119,9 @@ class WorkforceService(BaseService):
         period_month: date,
         construction_object_id: Optional[UUID] = None,
     ) -> Dict[UUID, int]:
-        q = select(HeadcountPlan.work_id, HeadcountPlan.planned_count).where(
-            HeadcountPlan.project_id == project_id, HeadcountPlan.period_month == period_month
+        rows = await self.wf_headcount_plan_manager.planned_rows(
+            period_month, self.access.headcount_plan_ids(), project_id, construction_object_id
         )
-        if construction_object_id is not None:
-            q = q.where(HeadcountPlan.construction_object_id == construction_object_id)
-        rows = await self.wf_headcount_plan_manager.fetch(q, with_scalars=False)
         return {r.work_id: r.planned_count for r in rows}
 
     def _build_work_type_rows(
@@ -140,7 +138,7 @@ class WorkforceService(BaseService):
             if it.work_id not in wt_named:
                 wt_named[it.work_id] = NamedEntitySchema(
                     id=it.work_id,
-                    name=it.work_type.name if it.work_type else None,
+                    name=it.work.name if it.work else None,
                 )
 
         agg: Dict[UUID, list] = {}
@@ -197,13 +195,8 @@ class WorkforceService(BaseService):
         project: Project,
         period_month: Optional[date] = None,
     ) -> ProjectDetailResponse:
-        bp_q = (
-            select(BudgetPeriod).where(BudgetPeriod.project_id == project.id).order_by(BudgetPeriod.period_month.desc())
-        )
-        if period_month:
-            bp_q = bp_q.where(BudgetPeriod.period_month == period_month)
-        bp_list = await self.wf_budget_period_manager.fetch(bp_q.limit(1))
-        bp = bp_list[0] if bp_list else None
+        await self.access.require_projects([project.id])
+        bp = await self.wf_budget_period_manager.latest(project.id, period_month)
 
         if not bp:
             return ProjectDetailResponse(
@@ -213,10 +206,12 @@ class WorkforceService(BaseService):
                 work_types=[],
             )
 
-        all_items = await self.wf_budget_item_manager.search(budget_period_id=bp.id)
+        all_items = await self.wf_budget_item_manager.search(
+            id__in=self.access.budget_item_ids(), budget_period_id=bp.id
+        )
         norms_list = await self.wf_workforce_norm_manager.search(project_class=project.project_class)
         norms = {n.work_id: n for n in norms_list}
-        objects = await self.wf_project_object_manager.search(project_id=project.id)
+        objects = await self.wf_project_object_manager.search(id__in=self.access.object_ids(), project_id=project.id)
 
         items_by_obj: Dict[Optional[UUID], List] = defaultdict(list)
         for it in all_items:
@@ -297,7 +292,7 @@ class WorkforceService(BaseService):
         )
 
     async def calc_dashboard(self) -> DashboardResponse:
-        projects = await self.wf_project_manager.search()
+        projects = await self.wf_project_manager.search(id__in=self.access.project_ids())
         rows = []
         total_net = Decimal("0")
         total_req = 0.0
@@ -357,38 +352,25 @@ class WorkforceService(BaseService):
         )
 
     async def calc_forecast(self, project_id: UUID) -> ForecastResponse:
-        today = date.today()
+        await self.access.require_projects([project_id])
+        today = business_today()
         project = await self.wf_project_manager.get_by_id(project_id)
-        objects = await self.wf_project_object_manager.search(project_id=project_id)
+        objects = await self.wf_project_object_manager.search(id__in=self.access.object_ids(), project_id=project_id)
         obj_map = {o.id: o for o in objects}
 
         norms_result = await self.wf_workforce_norm_manager.search()
         norms = {(n.work_id, n.project_class): n for n in norms_result}
 
-        bp_q = (
-            select(BudgetPeriod)
-            .where(BudgetPeriod.project_id == project_id)
-            .order_by(BudgetPeriod.period_month.desc())
-            .limit(1)
-        )
-        bp_list = await self.wf_budget_period_manager.fetch(bp_q)
-        bp = bp_list[0] if bp_list else None
+        bp = await self.wf_budget_period_manager.latest(project_id)
         if not bp:
             return ForecastResponse(project_id=project_id, rows=[])
 
-        items = await self.wf_budget_item_manager.search(budget_period_id=bp.id)
+        items = await self.wf_budget_item_manager.search(id__in=self.access.budget_item_ids(), budget_period_id=bp.id)
 
         since = today - timedelta(days=30)
-        fact_q = (
-            select(
-                HeadcountFact.construction_object_id,
-                HeadcountFact.work_id,
-                func.avg(HeadcountFact.count).label("avg"),
-            )
-            .where(HeadcountFact.project_id == project_id, HeadcountFact.fact_date >= since)
-            .group_by(HeadcountFact.construction_object_id, HeadcountFact.work_id)
+        fact_rows = await self.wf_headcount_fact_manager.averages(
+            since, ("construction_object_id", "work_id"), self.access.headcount_fact_ids(), project_id=project_id
         )
-        fact_rows = await self.wf_headcount_fact_manager.fetch(fact_q, with_scalars=False)
         fact_map: Dict[Tuple, float] = {(r.construction_object_id, r.work_id): float(r.avg) for r in fact_rows}
 
         rows = []
@@ -438,25 +420,24 @@ class WorkforceService(BaseService):
         return ForecastResponse(project_id=project_id, rows=rows)
 
     async def calc_object_contractors(self, construction_object_id: UUID) -> List[ContractorHeadcountRow]:
-        today = date.today()
+        await self.access.require_objects([construction_object_id])
+        today = business_today()
         period = today.replace(day=1)
         since = today - timedelta(days=30)
 
-        fact_q = (
-            select(
-                HeadcountFact.contractor_id,
-                HeadcountFact.work_id,
-                func.avg(HeadcountFact.count).label("avg"),
-            )
-            .where(HeadcountFact.construction_object_id == construction_object_id, HeadcountFact.fact_date >= since)
-            .group_by(HeadcountFact.contractor_id, HeadcountFact.work_id)
+        fact_rows = await self.wf_headcount_fact_manager.averages(
+            since,
+            ("contractor_id", "work_id"),
+            self.access.headcount_fact_ids(),
+            construction_object_id=construction_object_id,
         )
-        fact_rows = await self.wf_headcount_fact_manager.fetch(fact_q, with_scalars=False)
 
-        plan_q = select(HeadcountPlan.contractor_id, HeadcountPlan.work_id, HeadcountPlan.planned_count).where(
-            HeadcountPlan.construction_object_id == construction_object_id, HeadcountPlan.period_month == period
+        plan_rows = await self.wf_headcount_plan_manager.planned_rows(
+            period,
+            self.access.headcount_plan_ids(),
+            construction_object_id=construction_object_id,
+            include_contractor=True,
         )
-        plan_rows = await self.wf_headcount_plan_manager.fetch(plan_q, with_scalars=False)
         plan_map = {(r.contractor_id, r.work_id): r.planned_count for r in plan_rows}
 
         contractor_ids = {r.contractor_id for r in fact_rows if r.contractor_id}
@@ -491,38 +472,26 @@ class WorkforceService(BaseService):
         threshold_pct: float = 50.0,
         min_objects: int = 3,
     ) -> SystemProblemsResponse:
-        today = date.today()
+        today = business_today()
         since = today - timedelta(days=30)
 
-        fact_q = (
-            select(
-                HeadcountFact.construction_object_id,
-                HeadcountFact.work_id,
-                func.avg(HeadcountFact.count).label("avg"),
-            )
-            .where(HeadcountFact.fact_date >= since)
-            .group_by(HeadcountFact.construction_object_id, HeadcountFact.work_id)
+        fact_rows = await self.wf_headcount_fact_manager.averages(
+            since, ("construction_object_id", "work_id"), self.access.headcount_fact_ids()
         )
-        fact_rows = await self.wf_headcount_fact_manager.fetch(fact_q, with_scalars=False)
 
         norms_list = await self.wf_workforce_norm_manager.search()
-        projects = await self.wf_project_manager.search()
+        projects = await self.wf_project_manager.search(id__in=self.access.project_ids())
 
         required_map: Dict[Tuple, float] = {}
         for proj in projects:
-            bp_q = (
-                select(BudgetPeriod)
-                .where(BudgetPeriod.project_id == proj.id)
-                .order_by(BudgetPeriod.period_month.desc())
-                .limit(1)
-            )
-            bp_list = await self.wf_budget_period_manager.fetch(bp_q)
-            bp = bp_list[0] if bp_list else None
+            bp = await self.wf_budget_period_manager.latest(proj.id)
             if not bp:
                 continue
 
             norms = {n.work_id: n for n in norms_list if n.project_class == proj.project_class}
-            items = await self.wf_budget_item_manager.search(budget_period_id=bp.id)
+            items = await self.wf_budget_item_manager.search(
+                id__in=self.access.budget_item_ids(), budget_period_id=bp.id
+            )
             for item in items:
                 if item.construction_object_id is None:
                     continue
@@ -535,7 +504,7 @@ class WorkforceService(BaseService):
                     required_map[(item.construction_object_id, item.work_id)] = net / nm
 
         fact_by_key = {(r.construction_object_id, r.work_id): float(r.avg) for r in fact_rows}
-        objects = await self.wf_project_object_manager.search()
+        objects = await self.wf_project_object_manager.search(id__in=self.access.object_ids())
         obj_names = {o.id: o.name for o in objects}
 
         coverage_by_wt: Dict[UUID, List[Tuple]] = defaultdict(list)
@@ -566,44 +535,25 @@ class WorkforceService(BaseService):
         return SystemProblemsResponse(threshold_pct=threshold_pct, min_objects=min_objects, problems=problems)
 
     async def calc_contractor_rating(self) -> List[ContractorRatingRow]:
-        today = date.today()
+        today = business_today()
         since_3m = today - timedelta(days=90)
-        contractors = await self.contractor_manager.search()
+        contractors = await self.contractor_manager.search(id__in=self.access.contractor_ids())
 
         rows = []
         for c in contractors:
-            fact_avg_q = select(func.avg(HeadcountFact.count)).where(
-                HeadcountFact.contractor_id == c.id,
-                HeadcountFact.fact_date >= since_3m,
+            fact_avg = await self.wf_headcount_fact_manager.contractor_average(
+                c.id, since_3m, self.access.headcount_fact_ids()
             )
-            fact_avg: Optional[float] = await self.wf_headcount_fact_manager.fetch_val(fact_avg_q)
-
-            plan_sum_q = select(func.sum(HeadcountPlan.planned_count)).where(
-                HeadcountPlan.contractor_id == c.id,
-                HeadcountPlan.period_month >= since_3m.replace(day=1),
+            plan_sum = await self.wf_headcount_plan_manager.contractor_total(
+                c.id, since_3m.replace(day=1), self.access.headcount_plan_ids()
             )
-            plan_sum: Optional[int] = await self.wf_headcount_plan_manager.fetch_val(plan_sum_q)
 
             avg_cov: Optional[float] = None
             if fact_avg is not None and plan_sum:
                 avg_cov = round(float(fact_avg) / (float(plan_sum) / 3) * 100, 1)
 
-            v_count_q = select(func.count(Violation.id)).where(Violation.contractor_id == c.id)
-            v_count: int = await self.wf_violation_manager.fetch_val(v_count_q) or 0
-
-            missed_q = (
-                select(func.count(MobilizationCheckpoint.id))
-                .join(MobilizationPlan, MobilizationCheckpoint.mobilization_plan_id == MobilizationPlan.id)
-                .join(ChallengeItem, MobilizationPlan.challenge_item_id == ChallengeItem.id)
-                .join(Challenge, ChallengeItem.challenge_id == Challenge.id)
-                .join(ConstructionObject, Challenge.construction_object_id == ConstructionObject.id)
-                .join(ContractorAssignment, ContractorAssignment.construction_object_id == ConstructionObject.id)
-                .where(
-                    ContractorAssignment.contractor_id == c.id,
-                    MobilizationCheckpoint.status == CheckpointStatus.MISSED,
-                )
-            )
-            missed: int = await self.wf_mobilization_checkpoint_manager.fetch_val(missed_q) or 0
+            v_count = await self.wf_violation_manager.count(contractor_id=c.id, id__in=self.access.violation_ids())
+            missed = await self.wf_mobilization_checkpoint_manager.missed_count(c.id, self.access.checkpoint_ids())
 
             rating = round((avg_cov or 0.0) * 0.5 - v_count * 10 - missed * 5, 1)
             rows.append(
@@ -621,22 +571,16 @@ class WorkforceService(BaseService):
         return rows
 
     async def check_challenge_checkpoints(self, challenge_id: UUID) -> int:
-        today = date.today()
+        self.access.require_business_write()
+        await self.access.require_challenges([challenge_id])
+        today = business_today()
         challenge = await self.wf_challenge_manager.get_by_id(challenge_id)
         if not challenge:
             return 0
 
-        cp_q = (
-            select(MobilizationCheckpoint)
-            .join(MobilizationPlan, MobilizationCheckpoint.mobilization_plan_id == MobilizationPlan.id)
-            .join(ChallengeItem, MobilizationPlan.challenge_item_id == ChallengeItem.id)
-            .where(
-                ChallengeItem.challenge_id == challenge_id,
-                MobilizationCheckpoint.check_date <= today,
-                MobilizationCheckpoint.status == CheckpointStatus.PENDING,
-            )
+        checkpoints = await self.wf_mobilization_checkpoint_manager.pending_for_challenge(
+            challenge_id, today, self.access.checkpoint_ids()
         )
-        checkpoints = await self.wf_mobilization_checkpoint_manager.fetch(cp_q)
 
         updated = 0
         violations_data = []
@@ -681,8 +625,9 @@ class WorkforceService(BaseService):
         return updated
 
     async def scan_violations(self) -> ViolationScanResult:
-        today = date.today()
-        projects = await self.wf_project_manager.search()
+        self.access.require_business_write()
+        today = business_today()
+        projects = await self.wf_project_manager.search(id__in=self.access.project_ids())
         new_violations_data = []
 
         for proj in projects:
@@ -691,6 +636,7 @@ class WorkforceService(BaseService):
                 for wt in obj.work_types or []:
                     if wt.coverage_pct is not None and wt.coverage_pct < 60 and wt.required_headcount:
                         existing = await self.wf_violation_manager.search(
+                            id__in=self.access.violation_ids(),
                             construction_object_id=obj.id,
                             work_id=wt.work_type.id,
                             violation_type="coverage_critical",
@@ -718,6 +664,7 @@ class WorkforceService(BaseService):
 
                     if wt.plan_report and wt.fact_30d < wt.plan_report * 0.8:
                         existing = await self.wf_violation_manager.search(
+                            id__in=self.access.violation_ids(),
                             construction_object_id=obj.id,
                             work_id=wt.work_type.id,
                             violation_type="plan_not_met",
@@ -746,8 +693,9 @@ class WorkforceService(BaseService):
         return ViolationScanResult(created=len(new_violations_data), violations=[])
 
     async def auto_escalate_violations(self) -> int:
-        today = date.today()
-        violations = await self.wf_violation_manager.search(resolved=False)
+        self.access.require_business_write()
+        today = business_today()
+        violations = await self.wf_violation_manager.search(id__in=self.access.violation_ids(), resolved=False)
         escalated_count = 0
 
         for v in violations:
@@ -792,7 +740,7 @@ class WorkforceService(BaseService):
                     construction_object_id=v.construction_object_id,
                     work_type=NamedEntitySchema(
                         id=v.work_id,
-                        name=v.work_type.name if v.work_type else None,
+                        name=v.work.name if v.work else None,
                     ),
                     contractor_id=v.contractor_id,
                     violation_date=v.violation_date,
@@ -809,6 +757,200 @@ class WorkforceService(BaseService):
                 )
             )
         return result
+
+    async def search_project(self, **filters: Any) -> list[m.Project]:
+        """List project using the operation's explicit assignment filter."""
+        allowed_ids = self.access.project_ids()
+        if allowed_ids is not None:
+            filters["id__in"] = allowed_ids
+        return await self.wf_project_manager.search(**filters)
+
+    async def count_project(self, **filters: Any) -> int:
+        """Count the same records available to the project list."""
+        allowed_ids = self.access.project_ids()
+        if allowed_ids is not None:
+            filters["id__in"] = allowed_ids
+        return await self.wf_project_manager.count(**filters)
+
+    async def get_project(self, entity_id: UUID) -> m.Project | None:
+        """Authorize a selected project before resolving its identity."""
+        await self.access.require_projects([entity_id])
+        return await self.wf_project_manager.get_by_id(entity_id)
+
+    async def create_project(self, payload: dict[str, Any]) -> m.Project:
+        """Create project after validating its declared parent references."""
+        self.access.require_shared_write()
+        return await self.wf_project_manager.create(payload)
+
+    async def update_project(self, entity_id: UUID, payload: dict[str, Any]) -> m.Project | None:
+        """Update an authorized project."""
+        self.access.require_business_write()
+        await self.access.require_projects([entity_id])
+        return await self.wf_project_manager.update_by_id(entity_id, payload)
+
+    async def delete_project(self, entity_id: UUID) -> None:
+        """Delete an authorized project."""
+        self.access.require_business_write()
+        await self.access.require_projects([entity_id])
+        await self.wf_project_manager.delete_by_id(entity_id)
+
+    async def search_project_object(self, **filters: Any) -> list[m.ConstructionObject]:
+        """List project_object using the operation's explicit assignment filter."""
+        await self._authorize_selectors(filters)
+        allowed_ids = self.access.object_ids()
+        if allowed_ids is not None:
+            filters["id__in"] = allowed_ids
+        return await self.wf_project_object_manager.search(**filters)
+
+    async def create_project_object(self, payload: dict[str, Any]) -> m.ConstructionObject:
+        """Create project_object after validating its declared parent references."""
+        self.access.require_business_write()
+        await self._authorize_selectors(payload)
+        return await self.wf_project_object_manager.create(payload)
+
+    async def delete_project_object(self, entity_id: UUID) -> None:
+        """Delete an authorized project_object."""
+        self.access.require_business_write()
+        await self.access.require_objects([entity_id])
+        await self.wf_project_object_manager.delete_by_id(entity_id)
+
+    async def search_norm(self, **filters: Any) -> list[m.HeadcountNorm]:
+        """List norm using the operation's explicit assignment filter."""
+        return await self.wf_workforce_norm_manager.search(**filters)
+
+    async def create_norm(self, payload: dict[str, Any]) -> m.HeadcountNorm:
+        """Create norm after validating its declared parent references."""
+        self.access.require_shared_write()
+        return await self.wf_workforce_norm_manager.create(payload)
+
+    async def delete_norm(self, entity_id: UUID) -> None:
+        """Delete an authorized norm."""
+        self.access.require_shared_write()
+        await self.wf_workforce_norm_manager.delete_by_id(entity_id)
+
+    async def search_headcount_fact(self, **filters: Any) -> list[m.HeadcountFact]:
+        """List headcount_fact using the operation's explicit assignment filter."""
+        await self._authorize_selectors(filters)
+        allowed_ids = self.access.headcount_fact_ids()
+        if allowed_ids is not None:
+            filters["id__in"] = allowed_ids
+        return await self.wf_headcount_fact_manager.search(**filters)
+
+    async def count_headcount_fact(self, **filters: Any) -> int:
+        """Count the same records available to the headcount_fact list."""
+        await self._authorize_selectors(filters)
+        allowed_ids = self.access.headcount_fact_ids()
+        if allowed_ids is not None:
+            filters["id__in"] = allowed_ids
+        return await self.wf_headcount_fact_manager.count(**filters)
+
+    async def create_headcount_fact(self, payload: dict[str, Any]) -> m.HeadcountFact:
+        """Create headcount_fact after validating its declared parent references."""
+        self.access.require_business_write()
+        await self._authorize_selectors(payload)
+        return await self.wf_headcount_fact_manager.create(payload)
+
+    async def search_headcount_plan(self, **filters: Any) -> list[m.HeadcountPlan]:
+        """List headcount_plan using the operation's explicit assignment filter."""
+        await self._authorize_selectors(filters)
+        allowed_ids = self.access.headcount_plan_ids()
+        if allowed_ids is not None:
+            filters["id__in"] = allowed_ids
+        return await self.wf_headcount_plan_manager.search(**filters)
+
+    async def create_headcount_plan(self, payload: dict[str, Any]) -> m.HeadcountPlan:
+        """Create headcount_plan after validating its declared parent references."""
+        self.access.require_business_write()
+        await self._authorize_selectors(payload)
+        return await self.wf_headcount_plan_manager.create(payload)
+
+    async def search_challenge(self, **filters: Any) -> list[m.Challenge]:
+        """List challenge using the operation's explicit assignment filter."""
+        await self._authorize_selectors(filters)
+        allowed_ids = self.access.challenge_ids()
+        if allowed_ids is not None:
+            filters["id__in"] = allowed_ids
+        return await self.wf_challenge_manager.search(**filters)
+
+    async def create_challenge(self, payload: dict[str, Any], items: list[dict[str, Any]]) -> m.Challenge:
+        """Create an authorized challenge with its lines in one transaction."""
+        self.access.require_business_write()
+        await self._authorize_selectors(payload)
+        challenge = await self.wf_challenge_manager.create(payload, commit=False)
+        await self.db.flush()
+        for item in items:
+            await self.wf_challenge_item_manager.create({**item, "challenge_id": challenge.id}, commit=False)
+        await self.db.commit()
+        return await self.wf_challenge_manager.get_with_items(challenge.id)
+
+    async def bulk_create_article_bdrs(self, payloads: list[dict[str, Any]]) -> None:
+        """Import common budget articles after checking administrator access."""
+        self.access.require_shared_write()
+        await self.article_bdr_manager.bulk_insert(payloads, is_commit=True)
+
+    async def update_challenge(self, entity_id: UUID, payload: dict[str, Any]) -> m.Challenge | None:
+        """Update an authorized challenge."""
+        self.access.require_business_write()
+        await self.access.require_challenges([entity_id])
+        await self._authorize_selectors(payload)
+        return await self.wf_challenge_manager.update_by_id(entity_id, payload)
+
+    async def search_violation(self, **filters: Any) -> list[m.Violation]:
+        """List violation using the operation's explicit assignment filter."""
+        await self._authorize_selectors(filters)
+        allowed_ids = self.access.violation_ids()
+        if allowed_ids is not None:
+            filters["id__in"] = allowed_ids
+        return await self.wf_violation_manager.search(**filters)
+
+    async def count_violation(self, **filters: Any) -> int:
+        """Count the same records available to the violation list."""
+        await self._authorize_selectors(filters)
+        allowed_ids = self.access.violation_ids()
+        if allowed_ids is not None:
+            filters["id__in"] = allowed_ids
+        return await self.wf_violation_manager.count(**filters)
+
+    async def create_violation(self, payload: dict[str, Any]) -> m.Violation:
+        """Create violation after validating its declared parent references."""
+        self.access.require_business_write()
+        await self._authorize_selectors(payload)
+        return await self.wf_violation_manager.create(payload)
+
+    async def update_violation(self, entity_id: UUID, payload: dict[str, Any]) -> m.Violation | None:
+        """Update an authorized violation."""
+        self.access.require_business_write()
+        await self.access.require_violations([entity_id])
+        await self._authorize_selectors(payload)
+        return await self.wf_violation_manager.update_by_id(entity_id, payload)
+
+    async def search_article_bdr(self, **filters: Any) -> list[m.ArticleBDR]:
+        """List article_bdr using the operation's explicit assignment filter."""
+        return await self.article_bdr_manager.search(**filters)
+
+    async def create_article_bdr(self, payload: dict[str, Any]) -> m.ArticleBDR:
+        """Create article_bdr after validating its declared parent references."""
+        self.access.require_shared_write()
+        return await self.article_bdr_manager.create(payload)
+
+    async def delete_article_bdr(self, entity_id: UUID) -> None:
+        """Delete an authorized article_bdr."""
+        self.access.require_shared_write()
+        await self.article_bdr_manager.delete_by_id(entity_id)
+
+    async def search_article_mapping(self, **filters: Any) -> list[m.ArticleBDRWork]:
+        """List article_mapping using the operation's explicit assignment filter."""
+        return await self.wf_article_mapping_manager.search(**filters)
+
+    async def create_article_mapping(self, payload: dict[str, Any]) -> m.ArticleBDRWork:
+        """Create article_mapping after validating its declared parent references."""
+        self.access.require_shared_write()
+        return await self.wf_article_mapping_manager.create(payload)
+
+    async def delete_article_mapping(self, entity_id: UUID) -> None:
+        """Delete an authorized article_mapping."""
+        self.access.require_shared_write()
+        await self.wf_article_mapping_manager.delete_by_id(entity_id)
 
 
 async def get_workforce_service(db: AsyncSession = Depends(get_session)) -> WorkforceService:

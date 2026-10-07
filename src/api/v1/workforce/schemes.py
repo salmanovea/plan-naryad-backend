@@ -4,7 +4,7 @@ from typing import List, Optional
 from uuid import UUID
 
 from fastapi import Query
-from pydantic import BaseModel, ConfigDict
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from src.api.schemes import IDMixinSchema, NamedEntitySchema
 from src.models.dbo.tables.project_structure import ProjectClass
@@ -70,7 +70,7 @@ class CreateWfWorkforceNormRequest(BaseModel):
 class WfWorkforceNormSchema(IDMixinSchema):
     model_config = ConfigDict(from_attributes=True)
 
-    work_type: NamedEntitySchema
+    work_type: NamedEntitySchema = Field(validation_alias=AliasChoices("work_type", "work"))
     project_class: str
     median_day_bdr: Decimal
     median_month_bdr: Decimal
@@ -97,7 +97,7 @@ class WfHeadcountFactSchema(IDMixinSchema):
 
     project_id: UUID
     construction_object_id: Optional[UUID] = None
-    work_type: NamedEntitySchema
+    work_type: NamedEntitySchema = Field(validation_alias=AliasChoices("work_type", "work"))
     fact_date: date
     count: int
     source: str
@@ -121,7 +121,7 @@ class WfHeadcountPlanSchema(IDMixinSchema):
 
     project_id: UUID
     construction_object_id: Optional[UUID] = None
-    work_type: NamedEntitySchema
+    work_type: NamedEntitySchema = Field(validation_alias=AliasChoices("work_type", "work"))
     period_month: date
     planned_count: int
     contractor_id: Optional[UUID] = None
@@ -153,7 +153,7 @@ class ChallengeItemSchema(IDMixinSchema):
     model_config = ConfigDict(from_attributes=True)
 
     challenge_id: UUID
-    work_type: NamedEntitySchema
+    work_type: NamedEntitySchema = Field(validation_alias=AliasChoices("work_type", "work"))
     system_baseline: int
     requested_count: int
     approved_count: Optional[int] = None
@@ -224,7 +224,7 @@ class ArticleMappingSchema(IDMixinSchema):
     model_config = ConfigDict(from_attributes=True)
 
     article_bdr_id: UUID
-    work_type: NamedEntitySchema
+    work_type: NamedEntitySchema = Field(validation_alias=AliasChoices("work_type", "work"))
 
 
 class UnmappedArticleSchema(BaseModel):

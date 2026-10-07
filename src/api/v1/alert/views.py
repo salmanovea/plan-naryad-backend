@@ -2,6 +2,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from src.api.access import plan_access
 from src.api.schemes import (
     DataResponseSchema,
     ListDataResponseSchema,
@@ -19,7 +20,7 @@ from src.api.v1.alert.schemes import (
 from src.services.alert.service import AlertService, get_alert_service
 from src.utils.helpers import catch_all_exceptions, get_responses, pagination_params
 
-alert_router = APIRouter(prefix="/alerts", tags=["Alerts"])
+alert_router = APIRouter(prefix="/alerts", tags=["Alerts"], dependencies=[Depends(plan_access)])
 
 
 @alert_router.get("/", responses=get_responses(ResponseGroup.ALL_ERRORS))

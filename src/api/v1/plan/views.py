@@ -3,6 +3,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from src.api.access import plan_access
 from src.api.schemes import (
     DeleteMultipleRequestSchema,
     DataResponseSchema,
@@ -28,7 +29,7 @@ from src.services.common import current_actor
 from src.services.plan.service import AutogenerationService, default_target_date, get_plan_service
 from src.utils.helpers import catch_all_exceptions, get_responses, pagination_params
 
-plan_router = APIRouter(prefix="/plan-naryad", tags=["Plan Naryad"])
+plan_router = APIRouter(prefix="/plan-naryad", tags=["Plan Naryad"], dependencies=[Depends(plan_access)])
 
 
 @plan_router.get("/", responses=get_responses(ResponseGroup.ALL_ERRORS))
@@ -74,7 +75,7 @@ async def get_daily_plan(
     if section_id:
         search_kwargs["section_id"] = section_id
     items = await service.get_plan_items(**search_kwargs)
-    housing = await service.housing_manager.get_by_id(housing_id)
+    housing = await service.get_housing(housing_id)
     return DataResponseSchema[DailyPlanResponse](
         data=DailyPlanResponse(
             date=target_date,
@@ -99,7 +100,7 @@ async def get_contractor_plan(
         filter_kwargs["housing_id"] = housing_id
 
     items = await service.get_plan_items(**filter_kwargs)
-    contractor = await service.contractor_manager.get_by_id(contractor_id)
+    contractor = await service.get_contractor(contractor_id)
     return DataResponseSchema[ContractorPlanResponse](
         data=ContractorPlanResponse(
             date=target_date,
@@ -136,12 +137,17 @@ async def generate_plan(
     )
     if items:
         message = f"Сгенерировано позиций: {len(items)} на {target_date}."
+        scope: dict = {"date": target_date, "housing_id": body.housing_id}
+        if body.section_id:
+            scope["section_id"] = body.section_id
+        enriched = await service.get_plan_items(**scope)
     else:
         message = f"Не удалось сгенерировать план на {target_date}."
+        enriched = []
     return DataResponseSchema[GeneratePlanResponse](
         data=GeneratePlanResponse(
-            items=[PlanItemSchema.model_validate(i) for i in items],
-            count=len(items),
+            items=enriched,
+            count=len(enriched),
             message=message,
             reasons=reasons,
         )

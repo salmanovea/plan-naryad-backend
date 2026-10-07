@@ -3,6 +3,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from src.api.access import plan_access
 from src.api.schemes import (
     DataResponseSchema,
     ListDataResponseSchema,
@@ -20,7 +21,9 @@ from src.api.v1.reconciliation.schemes import (
 from src.services.reconciliation.service import ReconciliationService, get_reconciliation_service
 from src.utils.helpers import catch_all_exceptions, get_responses, pagination_params
 
-reconciliation_router = APIRouter(prefix="/reconciliation", tags=["Reconciliation"])
+reconciliation_router = APIRouter(
+    prefix="/reconciliation", tags=["Reconciliation"], dependencies=[Depends(plan_access)]
+)
 
 
 @reconciliation_router.post("/run", responses=get_responses(ResponseGroup.ALL_ERRORS))
@@ -118,13 +121,18 @@ async def list_daily_summaries(
     filter_data = filters.model_dump(exclude_none=True)
     date_from = filter_data.pop("date_from", None)
     date_to = filter_data.pop("date_to", None)
-    filter_data.pop("status", None)
+    summary_filters = {key: filter_data[key] for key in ("housing_id", "housing_id__in") if key in filter_data}
     if date_from:
-        filter_data["date__gte"] = date_from
+        summary_filters["date__gte"] = date_from
     if date_to:
-        filter_data["date__lte"] = date_to
+        summary_filters["date__lte"] = date_to
 
-    items, total = await service.list_summaries(pagination=pagination, order_by=["-date"], **filter_data)
+    items, total = await service.list_summaries(
+        pagination=pagination,
+        order_by=["-date"],
+        project_id=filter_data.get("project_id"),
+        **summary_filters,
+    )
     return ListDataResponseSchema[DailySummarySchema].create(
         list_data=items,
         pagination=pagination,

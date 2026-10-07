@@ -20,12 +20,16 @@ from src.config.logger import LoggerProvider
 from src.config.postgres.db_config import get_session
 from src.config.settings import app_config
 from src.models import managers
+from src.models.dbo.tables.contractor import Contractor
+from src.models.dbo.tables.housing import Housing
 from src.models.dbo.tables.plan import PlanItem, PlanSource, PlanStatus
 from src.models.dbo.tables.settings import ActionType
 from src.models.dbo.tables.work import FloorSortingDirection
+from src.services.access.service import AccessService
 from src.services.common import SYSTEM_ACTOR, BaseService, floor_label
 from src.services.contractor_works import ContractorWorksService
 from src.services.report_cells import CellKey, HousingSlice, ReportCellsService
+from src.utils.business_time import business_now
 
 log = LoggerProvider().get_logger(__name__)
 
@@ -61,7 +65,7 @@ def default_target_date(now: Optional[datetime] = None) -> date:
     The 03:00 scheduled run lands on today; a run started during the day or the evening
     targets tomorrow, because today's positions have already gone to the contractors.
     """
-    moment = now or datetime.now()
+    moment = now or business_now()
     if moment.hour < app_config.plan_transfer_cutoff_hour:
         return moment.date()
     return moment.date() + timedelta(days=1)
@@ -69,6 +73,8 @@ def default_target_date(now: Optional[datetime] = None) -> date:
 
 class AutogenerationService(BaseService):
     def __init__(self, db: AsyncSession):
+        self.access = AccessService(db)
+        self.db = db
         self.plan_item_manager = managers.PlanItemManager(db)
         self.work_fact_manager = managers.WorkFactManager(db)
         self.housing_manager = managers.HousingManager(db)
@@ -81,10 +87,31 @@ class AutogenerationService(BaseService):
         self.work_set_manager = managers.WorkSetManager(db)
         self.tech_sequence_manager = managers.TechSequenceItemManager(db)
         self.contractor_manager = managers.ContractorManager(db)
-        self.floor_limit_manager = managers.ContractorFloorLimitManager(db)
+        self.position_limit_manager = managers.ContractorPositionLimitManager(db)
         self.action_log_manager = managers.ActionLogManager(db)
         self.report_cells = ReportCellsService(db)
         self.contractor_works = ContractorWorksService(db)
+
+    async def _authorize_filters(self, filters: dict) -> None:
+        """Validate selectors declared by this domain's operations."""
+        if housing_id := filters.get("housing_id"):
+            await self.access.require_location(housing_id, filters.get("section_id"), filters.get("floor_id"))
+        else:
+            if section_id := filters.get("section_id"):
+                await self.access.require_sections([section_id])
+            if floor_id := filters.get("floor_id"):
+                await self.access.require_floors([floor_id])
+        if contractor_id := filters.get("contractor_id"):
+            await self.access.require_contractors([contractor_id])
+
+        if housing_ids := filters.get("housing_id__in"):
+            await self.access.require_housings(housing_ids)
+        if section_ids := filters.get("section_id__in"):
+            await self.access.require_sections(section_ids)
+        if floor_ids := filters.get("floor_id__in"):
+            await self.access.require_floors(floor_ids)
+        if contractor_ids := filters.get("contractor_id__in"):
+            await self.access.require_contractors(contractor_ids)
 
     @staticmethod
     def _enrich_plan_item(item: PlanItem) -> PlanItemSchema:
@@ -115,6 +142,10 @@ class AutogenerationService(BaseService):
         **filters,
     ) -> Tuple[List[PlanItemSchema], int]:
         """List plan items with denormalized section/floor/work/contractor names."""
+        await self._authorize_filters(filters)
+        allowed_ids = self.access.plan_item_ids()
+        if allowed_ids is not None:
+            filters["id__in"] = allowed_ids
         query = self.plan_item_manager.get_enriched_query()
         items = await self.plan_item_manager.search(query=query, order_by=order_by, pagination=pagination, **filters)
         total = await self.plan_item_manager.count(**filters)
@@ -122,14 +153,29 @@ class AutogenerationService(BaseService):
 
     async def get_plan_items(self, order_by: Optional[List[str]] = None, **filters) -> List[PlanItemSchema]:
         """Fetch plan items (no pagination) with denormalized labels."""
+        await self._authorize_filters(filters)
+        allowed_ids = self.access.plan_item_ids()
+        if allowed_ids is not None:
+            filters["id__in"] = allowed_ids
         query = self.plan_item_manager.get_enriched_query()
         items = await self.plan_item_manager.search(query=query, order_by=order_by, **filters)
         return [self._enrich_plan_item(i) for i in items]
 
     async def get_plan_item(self, plan_item_id: UUID) -> Optional[PlanItemSchema]:
         """Fetch a single plan item with denormalized labels."""
+        await self.access.require_plan_items([plan_item_id])
         item = await self.plan_item_manager.get_enriched_by_id(plan_item_id)
         return self._enrich_plan_item(item) if item else None
+
+    async def get_housing(self, housing_id: UUID) -> Housing | None:
+        """Resolve the authorized housing used by a daily plan response."""
+        await self.access.require_housings([housing_id])
+        return await self.housing_manager.get_by_id(housing_id)
+
+    async def get_contractor(self, contractor_id: UUID) -> Contractor | None:
+        """Resolve the authorized contractor used by a daily plan response."""
+        await self.access.require_contractors([contractor_id])
+        return await self.contractor_manager.get_by_id(contractor_id)
 
     async def has_plan_for(
         self,
@@ -138,20 +184,24 @@ class AutogenerationService(BaseService):
         section_id: Optional[UUID] = None,
     ) -> bool:
         """Whether the day already holds positions — the re-run confirmation gate."""
+        await self.access.require_location(housing_id, section_id)
         scope: dict = {"housing_id": housing_id, "date": target_date}
         if section_id:
             scope["section_id"] = section_id
-        return bool(await self.plan_item_manager.search(**scope))
+        return bool(await self.plan_item_manager.search(**scope, id__in=self.access.plan_item_ids()))
 
     async def housings_of_projects(self, project_ids: list[UUID]) -> list[UUID]:
         """Housings under the given projects — `project_id` is a filter, not a column.
 
         The chain is project → construction_object → housing, so the narrowing is two hops.
         """
+        await self.access.require_projects(project_ids)
         objects = await self.construction_object_manager.search(project_id__in=list(project_ids))
         if not objects:
             return []
-        housings = await self.housing_manager.search(construction_object_id__in=[o.id for o in objects])
+        housings = await self.housing_manager.search(
+            construction_object_id__in=[o.id for o in objects], id__in=self.access.housing_ids()
+        )
         return [h.id for h in housings]
 
     # ── Public feed for the Raport chessboard ─────────────────────────────────
@@ -175,6 +225,7 @@ class AutogenerationService(BaseService):
         if not housings:
             return []
 
+        await self.access.require_housings([housings[0].id])
         scope: dict = {
             "housing_id": housings[0].id,
             "date": target_date,
@@ -186,7 +237,7 @@ class AutogenerationService(BaseService):
                 return []
             scope["section_id"] = sections[0].id
 
-        items = await self.plan_item_manager.search(**scope)
+        items = await self.plan_item_manager.search(**scope, id__in=self.access.plan_item_ids())
         if not items:
             return []
 
@@ -248,6 +299,7 @@ class AutogenerationService(BaseService):
         If Raport cannot say which works belong to the floor, the wider list is offered rather
         than an empty one: an outage must not look like «nothing can be done here».
         """
+        await self.access.require_location(housing_id, section_id, floor_id)
         housing_nodes, section_nodes = await self._load_tech_nodes(housing_id)
         nodes = section_nodes.get(section_id) or housing_nodes
         if not nodes:
@@ -281,6 +333,7 @@ class AutogenerationService(BaseService):
 
     async def available_contractors(self, work_id: UUID, floor_id: UUID) -> list[dict]:
         """Contractors assigned to a work on a floor, per the spec's dropdown rule."""
+        await self.access.require_floors([floor_id])
         contractor_ids = await self.contractor_works.get_contractors_for_cell(work_id=work_id, floor_id=floor_id)
         if not contractor_ids:
             return []
@@ -308,6 +361,8 @@ class AutogenerationService(BaseService):
         Percent and Raport cell ids are filled from the chessboard when the cell is known;
         a work the user picked outside the plan may have no cell yet, which is not an error.
         """
+        self.access.require_business_write()
+        await self.access.require_location(housing_id, section_id, floor_id)
         section = await self.section_manager.get_by_id(section_id)
         floor = await self.floor_manager.get_by_id(floor_id)
         work = await self.work_manager.get_by_id(work_id)
@@ -322,7 +377,7 @@ class AutogenerationService(BaseService):
         if contractor_id not in allowed:
             return None, (
                 f"Не назначен подрядчик для работы {work.name} секция {section.name} "
-                f"этаж {floor.floor_number}. Добавьте назначение в системе Рапорт."
+                f"этаж {floor_label(floor)}. Добавьте назначение в системе Рапорт."
             )
 
         slice_ = await self.report_cells.get_housing_slice(housing_id, work_ids=[work_id])
@@ -348,11 +403,13 @@ class AutogenerationService(BaseService):
 
     async def confirm_item(self, plan_item_id: UUID, actor: str = UNKNOWN_ACTOR) -> Optional[PlanItem]:
         """`draft` → `confirmed`. The spec has no way back — a wrong position is deleted."""
+        self.access.require_business_write()
+        await self.access.require_plan_items([plan_item_id])
         item = await self.plan_item_manager.update_by_id(
             plan_item_id,
             {
                 "rs_confirmed": True,
-                "rs_confirmed_at": datetime.now(),
+                "rs_confirmed_at": business_now(),
                 "rs_confirmed_by": actor,
                 "status": PlanStatus.CONFIRMED.value,
             },
@@ -363,6 +420,8 @@ class AutogenerationService(BaseService):
 
     async def delete_item(self, plan_item_id: UUID, actor: str = UNKNOWN_ACTOR) -> bool:
         """Physical delete — editing a position means deleting and adding a correct one."""
+        self.access.require_business_write()
+        await self.access.require_plan_items([plan_item_id])
         item = await self.plan_item_manager.get_by_id(plan_item_id)
         if not item:
             return False
@@ -376,10 +435,12 @@ class AutogenerationService(BaseService):
         A day on one housing runs to ~136 positions, so confirming them one by one is not a
         workable flow. Ids that do not exist are reported rather than silently ignored.
         """
+        self.access.require_business_write()
+        await self.access.require_plan_items(plan_item_ids)
         items = await self.plan_item_manager.get_by_ids(list(set(plan_item_ids)))
         found = {item.id for item in items}
         if items:
-            confirmed_at = datetime.now()
+            confirmed_at = business_now()
             await self.plan_item_manager.bulk_update_by_batch(
                 [
                     {
@@ -398,12 +459,15 @@ class AutogenerationService(BaseService):
 
     async def delete_items(self, plan_item_ids: list[UUID], actor: str = UNKNOWN_ACTOR) -> dict:
         """Delete several positions at once — the group counterpart of `delete_item`."""
+        self.access.require_business_write()
+        await self.access.require_plan_items(plan_item_ids)
         items = await self.plan_item_manager.get_by_ids(list(set(plan_item_ids)))
         found = {item.id for item in items}
         if items:
             for item in items:
                 await self.log_action(ActionType.PLAN_ITEM_DELETE, item.id, actor, {"date": str(item.date)})
             await self.plan_item_manager.bulk_delete(list(found))
+            await self.db.commit()
         return {"deleted": len(found), "not_found": [str(i) for i in set(plan_item_ids) - found]}
 
     async def transfer_day(
@@ -418,13 +482,15 @@ class AutogenerationService(BaseService):
         contractor whether or not it was confirmed — so both `draft` and `confirmed` move.
         Idempotent: positions already transferred are left alone.
         """
+        self.access.require_business_write()
+        await self._authorize_filters({"housing_id": housing_id, "section_id": section_id})
         scope: dict = {"date": target_date, "status__in": [PlanStatus.DRAFT.value, PlanStatus.CONFIRMED.value]}
         if housing_id:
             scope["housing_id"] = housing_id
         if section_id:
             scope["section_id"] = section_id
 
-        items = await self.plan_item_manager.search(**scope)
+        items = await self.plan_item_manager.search(**scope, id__in=self.access.plan_item_ids())
         if not items:
             return {"transferred": 0}
         await self.plan_item_manager.bulk_update_by_batch(
@@ -476,27 +542,48 @@ class AutogenerationService(BaseService):
         """
         ready: list[tuple[int, UUID]] = []
         for work_id, node in nodes.items():
-            if self._cell_done(section_id, floor_id, work_id, slice_):
+            states = slice_.states_on(section_id, floor_id, work_id)
+            if not states:
                 continue
-            if all(self._cell_done(section_id, floor_id, dep, slice_) for dep in node.depends_on):
-                if all(self._cell_started(section_id, floor_id, dep, slice_) for dep in node.depends_on_ss):
+            if all(state.is_done for state in states):
+                continue
+            if all(self._dep_done(section_id, floor_id, dep, slice_) for dep in node.depends_on):
+                if all(self._dep_started(section_id, floor_id, dep, slice_) for dep in node.depends_on_ss):
                     ready.append((node.order, work_id))
         return [work_id for _, work_id in sorted(ready)]
 
     @staticmethod
-    def _cell_done(section_id: UUID, floor_id: UUID, work_id: UUID, slice_: HousingSlice) -> bool:
-        """A work is finished on a cell when every contractor on it is finished.
+    def _dep_states(section_id: UUID, floor_id: UUID, work_id: UUID, slice_: HousingSlice) -> list:
+        """The predecessor's states at the nearest scope where it exists at all.
 
-        Absent from the slice means Raport has no such cell — treated as not finished, so a
-        missing predecessor never unlocks a successor by accident.
+        Works have different floor sets in the Gantt: a foundation slab lives on the «-»
+        pseudo-floor only, while its successors run on floors 1..N. A strict same-cell
+        lookup would block those successors forever, so the cascade is:
+
+          1. the same cell (section + floor) — the strict per-floor rule when it applies;
+          2. the same section, any floor — a per-section predecessor gates its section;
+          3. anywhere in the housing («Весь корпус» included) — a housing-level predecessor.
+
+        An empty answer everywhere means the predecessor has no cells at all — treated as
+        not finished, so a missing predecessor never unlocks a successor by accident.
         """
         states = slice_.states_on(section_id, floor_id, work_id)
+        if not states:
+            states = slice_.states_in_section(section_id, work_id)
+        if not states:
+            states = slice_.states_of_work(work_id)
+        return states
+
+    @classmethod
+    def _dep_done(cls, section_id: UUID, floor_id: UUID, work_id: UUID, slice_: HousingSlice) -> bool:
+        """A finish-to-start predecessor is satisfied when its nearest scope is all done."""
+        states = cls._dep_states(section_id, floor_id, work_id, slice_)
         return bool(states) and all(state.is_done for state in states)
 
-    @staticmethod
-    def _cell_started(section_id: UUID, floor_id: UUID, work_id: UUID, slice_: HousingSlice) -> bool:
-        """A work has started on a cell when any contractor shows progress."""
-        return any(state.percent > 0 for state in slice_.states_on(section_id, floor_id, work_id))
+    @classmethod
+    def _dep_started(cls, section_id: UUID, floor_id: UUID, work_id: UUID, slice_: HousingSlice) -> bool:
+        """A start-to-start predecessor is satisfied when its nearest scope shows progress."""
+        return any(state.percent > 0 for state in cls._dep_states(section_id, floor_id, work_id, slice_))
 
     # ── Sequence scope: a section's own plan wins over the housing-wide one ────
 
@@ -508,7 +595,9 @@ class AutogenerationService(BaseService):
         Raport builds calendar plans per housing and per section; a section that has its
         own plan is generated from it alone, the rest fall back to the housing-wide one.
         """
-        rows = await self.tech_sequence_manager.search(housing_id=housing_id, order_by=["order"])
+        rows = await self.tech_sequence_manager.search(
+            housing_id=housing_id, order_by=["order"], id__in=self.access.tech_sequence_ids()
+        )
         housing_nodes: dict[UUID, TechNode] = {}
         section_nodes: dict[UUID, dict[UUID, TechNode]] = {}
         for row in rows:
@@ -527,23 +616,15 @@ class AutogenerationService(BaseService):
 
     # ── Floor limits ──────────────────────────────────────────────────────────
 
-    async def _floor_limits(self) -> dict[tuple[Optional[UUID], UUID], int]:
-        """`(contractor_id | None, work_id) → floors_limit` from contractor_floor_limits."""
-        rows = await self.floor_limit_manager.search()
-        return {(row.contractor_id, row.work_id): row.floors_limit for row in rows}
+    async def _position_limits(self) -> dict[UUID, int]:
+        """`contractor_id → positions_limit` from contractor_position_limits (Р8)."""
+        rows = await self.position_limit_manager.search(id__in=self.access.position_limit_ids())
+        return {row.contractor_id: row.positions_limit for row in rows}
 
     @staticmethod
-    def _limit_for(
-        limits: dict[tuple[Optional[UUID], UUID], int],
-        contractor_id: UUID,
-        work_id: UUID,
-    ) -> int:
-        """Cascade from Р8: exact match, then the work-wide row, then the default."""
-        if (contractor_id, work_id) in limits:
-            return limits[(contractor_id, work_id)]
-        if (None, work_id) in limits:
-            return limits[(None, work_id)]
-        return app_config.default_floor_limit
+    def _limit_for(limits: dict[UUID, int], contractor_id: UUID) -> int:
+        """The contractor's own row, else the config default — the ТЗ limit is per contractor."""
+        return limits.get(contractor_id, app_config.default_floor_limit)
 
     # ── Generation ────────────────────────────────────────────────────────────
 
@@ -562,10 +643,15 @@ class AutogenerationService(BaseService):
         sections and floors where it is not finished, up to the contractor's floor limit.
 
         A re-run replaces the whole day, manual positions included, which is why it needs
-        `force`; the caller is expected to have confirmed with the user first.
+        `force`; the caller is expected to have confirmed with the user first. The day is
+        replaced only once the new one is built: Raport is read first, and the delete and the
+        insert share one short transaction — so neither a failure in between nor an empty
+        answer from Raport can leave the day empty.
 
         `reasons` explains an empty result in the spec's own wording.
         """
+        self.access.require_business_write()
+        await self.access.require_location(housing_id, section_id)
         reasons: List[str] = []
         await self.log_action(
             ActionType.PLAN_GENERATE,
@@ -583,11 +669,9 @@ class AutogenerationService(BaseService):
         if section_id:
             scope["section_id"] = section_id
 
-        existing = await self.plan_item_manager.search(**scope)
+        existing = await self.plan_item_manager.search(**scope, id__in=self.access.plan_item_ids())
         if existing and not force:
             return existing, reasons
-        if existing:
-            await self.plan_item_manager.bulk_delete([item.id for item in existing])
 
         housing_nodes, section_nodes = await self._load_tech_nodes(housing_id)
         if not housing_nodes and not section_nodes:
@@ -606,14 +690,14 @@ class AutogenerationService(BaseService):
             return [], reasons
 
         every_work = set(housing_nodes) | {w for nodes in section_nodes.values() for w in nodes}
-        slice_ = await self.report_cells.get_housing_slice(housing_id, work_ids=list(every_work))
         assignments = await self.contractor_works.get_housing_assignments(housing_id)
-        limits = await self._floor_limits()
+        slice_ = await self.report_cells.get_housing_slice(housing_id, work_ids=list(every_work))
+        limits = await self._position_limits()
 
         works = {w.id: w for w in await self.work_manager.get_by_ids(list(every_work))}
 
         plan_rows: list[dict] = []
-        floors_taken: dict[tuple[UUID, UUID], int] = {}
+        floors_taken: dict[UUID, int] = {}
         missing_contractor: list[str] = []
 
         for section in sections:
@@ -622,8 +706,6 @@ class AutogenerationService(BaseService):
                 continue
             floors = await self.floor_manager.search(section_id=section.id, order_by=["floor_number"])
 
-            # Readiness is evaluated once per floor and reused; the frontier of the whole
-            # section is the union, walked in sequence order.
             ready_by_floor = {floor.id: set(self._ready_works(nodes, section.id, floor.id, slice_)) for floor in floors}
             frontier = sorted(
                 {work_id for ready in ready_by_floor.values() for work_id in ready},
@@ -642,13 +724,13 @@ class AutogenerationService(BaseService):
                         work = works.get(work_id)
                         missing_contractor.append(
                             f"Не удалось сгенерировать план на {target_date}. Не назначен подрядчик для работы "
-                            f"{work.name if work else work_id} секция {section.name} этаж {floor.floor_number}. "
+                            f"{work.name if work else work_id} секция {section.name} этаж {floor_label(floor)}. "
                             "Добавьте назначение в системе Рапорт."
                         )
                         continue
 
-                    limit = self._limit_for(limits, contractor_id, work_id)
-                    taken = floors_taken.get((contractor_id, work_id), 0)
+                    limit = self._limit_for(limits, contractor_id)
+                    taken = floors_taken.get(contractor_id, 0)
                     if taken >= limit:
                         continue
 
@@ -668,11 +750,21 @@ class AutogenerationService(BaseService):
                             "status": PlanStatus.DRAFT,
                         }
                     )
-                    floors_taken[(contractor_id, work_id)] = taken + 1
+                    floors_taken[contractor_id] = taken + 1
 
+        if existing and not plan_rows and not slice_.cells:
+            reasons.append(
+                "Рапорт не вернул ни одной ячейки шахматки по корпусу — существующий план-наряд оставлен без изменений."
+            )
+            return [], reasons
+
+        if existing:
+            await self.plan_item_manager.bulk_delete([item.id for item in existing])
         if plan_rows:
             await self.plan_item_manager.bulk_insert(plan_rows, is_commit=True)
-            return await self.plan_item_manager.search(**scope), reasons
+            reasons.extend(dict.fromkeys(missing_contractor))
+            return await self.plan_item_manager.search(**scope, id__in=self.access.plan_item_ids()), reasons
+        await self.db.commit()
 
         # Nothing generated — say why, in the spec's wording where it has one.
         reasons.extend(dict.fromkeys(missing_contractor))

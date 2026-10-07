@@ -8,18 +8,28 @@ from typing import Optional
 
 from src.models.dbo.tables.housing import Floor
 
-# Raport stores an unnamed floor as a literal dash (1787 of 20402 rows), which is not a
-# label a user can act on. Anything in this set counts as «no name given».
-_EMPTY_NAMES = {"", "-", "—", "–"}
+
+def _is_number(name: str) -> bool:
+    try:
+        int(name)
+    except ValueError:
+        return False
+    return True
 
 
 def floor_label(floor: Optional[Floor]) -> Optional[str]:
-    """«Кровля», «площадка/нулевой цикл» — or «Этаж 3» when Raport gave no name."""
+    """The floor's Raport name verbatim; a bare number gets an «Этаж » prefix.
+
+    Raport is the master system for the project structure (DEV-6938/6979): «Кровля» and
+    the literal dash «-» (the housing-wide pseudo-floor) are shown exactly as stored.
+    The only cosmetics allowed is prefixing a purely numeric name — «3» → «Этаж 3».
+    `floor_number` is Raport's sort_order, an ordering key — never part of the label.
+    """
     if floor is None:
         return None
     name = (floor.name or "").strip()
-    if name and name not in _EMPTY_NAMES:
-        return name
-    if floor.floor_number is not None:
-        return f"Этаж {floor.floor_number}"
-    return None
+    if not name:
+        return "—"
+    if _is_number(name):
+        return f"Этаж {name}"
+    return name

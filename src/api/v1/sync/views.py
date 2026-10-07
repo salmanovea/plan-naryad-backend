@@ -4,6 +4,7 @@ from datetime import date
 
 from fastapi import APIRouter, Depends
 
+from src.api.access import plan_access
 from src.api.schemes import DataResponseSchema, ResponseGroup
 from src.api.v1.sync.schemes import (
     ImportConstructionObjectsRequest,
@@ -22,7 +23,7 @@ from src.api.v1.sync.schemes import (
 from src.services.sync.service import SyncReportService, get_sync_report_service
 from src.utils.helpers import catch_all_exceptions, get_responses
 
-sync_router = APIRouter(prefix="/sync", tags=["Sync"])
+sync_router = APIRouter(prefix="/sync", tags=["Sync"], dependencies=[Depends(plan_access)])
 
 
 # ---------------------------------------------------------------------------

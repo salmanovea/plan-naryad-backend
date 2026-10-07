@@ -360,20 +360,33 @@ async def test_bulk_operations_are_journalled_per_item(async_test_session):
 
 
 class TestFloorLabels:
-    """Raport leaves 1787 of 20402 floors named «-»; the UI must not show that."""
+    """Raport is the master of the structure (DEV-6938): its floor names are shown
+    verbatim — the dash pseudo-floor included. floor_number is a sort key, never a label."""
 
-    def test_dash_name_falls_back_to_the_number(self):
+    def test_numeric_name_gets_the_prefix(self):
         from src.models.dbo.tables.housing import Floor
         from src.services.common import floor_label
 
-        assert floor_label(Floor(name="-", floor_number=3)) == "Этаж 3"
-        assert floor_label(Floor(name="  ", floor_number=1)) == "Этаж 1"
+        assert floor_label(Floor(name="3", floor_number=7)) == "Этаж 3"
+        assert floor_label(Floor(name="-2", floor_number=1)) == "Этаж -2"
+
+    def test_dash_is_shown_verbatim_not_renumbered(self):
+        from src.models.dbo.tables.housing import Floor
+        from src.services.common import floor_label
+
+        assert floor_label(Floor(name="-", floor_number=1)) == "-"
 
     def test_a_real_name_wins(self):
         from src.models.dbo.tables.housing import Floor
         from src.services.common import floor_label
 
         assert floor_label(Floor(name="кровля", floor_number=25)) == "кровля"
+
+    def test_empty_name_is_a_dash_not_a_number(self):
+        from src.models.dbo.tables.housing import Floor
+        from src.services.common import floor_label
+
+        assert floor_label(Floor(name="  ", floor_number=4)) == "—"
 
     def test_no_floor_no_label(self):
         from src.services.common import floor_label

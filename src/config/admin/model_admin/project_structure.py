@@ -3,6 +3,8 @@ from sqladmin import action
 from starlette.responses import RedirectResponse, Response
 
 from src.config.admin.categories import CATEGORY_PROJECT_STRUCTURE
+from src.config.admin.auth import admin_access_scope
+from src.services.access.schemes import SCOPE_KEY
 from src.config.admin.model_admin.base_admin import BaseAdmin
 from src.config.postgres.db_config import get_async_session
 from src.models.dbo.tables.project_structure import ConstructionObject, Project, Queue
@@ -51,6 +53,7 @@ class ProjectAdmin(BaseAdmin, model=Project):  # type: ignore[call-arg]
                 continue
             try:
                 async with get_async_session() as db:
+                    db.info[SCOPE_KEY] = admin_access_scope(request)
                     project = await db.get(Project, pk)
                     if not project:
                         continue

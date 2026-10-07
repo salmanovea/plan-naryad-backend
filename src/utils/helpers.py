@@ -31,6 +31,7 @@ from src.api.schemes import (
     PaginationSchema,
 )
 from src.config.logger import LoggerProvider
+from src.utils.exceptions import AccessError
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -79,6 +80,9 @@ def catch_all_exceptions(func: Callable[P, Awaitable[R]]) -> Callable[P, Awaitab
 
         try:
             return await func(*args, **kwargs)
+
+        except AccessError:
+            raise
 
         except RequestValidationError as e:
             schema_cls = RESPONSE_SCHEMAS["400"]["model"]
