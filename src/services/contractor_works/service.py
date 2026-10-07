@@ -17,6 +17,7 @@ from src.config.logger import LoggerProvider
 from src.config.postgres.db_config import get_session
 from src.external.report.api import ReportApi
 from src.models import managers
+from src.services.access.service import AccessService
 from src.services.common import BaseService, end_transaction
 
 log = LoggerProvider().get_logger(__name__)
@@ -70,6 +71,7 @@ class ContractorWorksService(BaseService):
 
     def __init__(self, db: AsyncSession, report: Optional[ReportApi] = None):
         self.db = db
+        self.access = AccessService(db)
         self.report = report or ReportApi()
         self.housing_manager = managers.HousingManager(db)
         self.section_manager = managers.SectionManager(db)
@@ -79,6 +81,7 @@ class ContractorWorksService(BaseService):
 
     async def get_housing_assignments(self, housing_id: UUID) -> HousingAssignments:
         """Every assignment on a housing — one paginated Raport query, ~2400 rows."""
+        await self.access.require_housings([housing_id])
         result = HousingAssignments(skipped={})
 
         housing = await self.housing_manager.get_by_id(housing_id)
@@ -100,6 +103,7 @@ class ContractorWorksService(BaseService):
 
     async def get_contractors_for_cell(self, work_id: UUID, floor_id: UUID) -> list[UUID]:
         """Contractors assigned to a work on a floor — the manual-add dropdown (ТЗ)."""
+        await self.access.require_floors([floor_id])
         work = await self.work_manager.get_by_id(work_id)
         floor = await self.floor_manager.get_by_id(floor_id)
         if not work or not work.raport_id or not floor or not floor.raport_id:
@@ -107,8 +111,13 @@ class ContractorWorksService(BaseService):
 
         await end_transaction(self.db)
         rows = await self._fetch_all(work_id=UUID(work.raport_id), floor_id=UUID(floor.raport_id))
+        rows = [
+            row
+            for row in rows
+            if _nested_id(row, "work", "id") == work.raport_id and _nested_id(row, "floor", "id") == floor.raport_id
+        ]
         contractor_raport_ids = {rid for rid in (_nested_id(r, "contractor", "id") for r in rows) if rid}
-        contractor_map = await self._resolve(self.contractor_manager, contractor_raport_ids)
+        contractor_map = await self._resolve(self.contractor_manager, contractor_raport_ids, assigned=True)
         return sorted(contractor_map.values(), key=str)
 
     async def _fill(self, result: HousingAssignments, rows: list[dict], housing_id: UUID) -> None:
@@ -119,7 +128,19 @@ class ContractorWorksService(BaseService):
             self.work_manager, {rid for rid in (_nested_id(r, "work", "id") for r in rows) if rid}
         )
         contractor_map = await self._resolve(
-            self.contractor_manager, {rid for rid in (_nested_id(r, "contractor", "id") for r in rows) if rid}
+            self.contractor_manager,
+            {
+                rid
+                for rid in (
+                    _nested_id(r, "contractor", "id")
+                    for r in rows
+                    if _nested_id(r, "section", "id") in section_map
+                    and _nested_id(r, "floor", "id") in floor_map
+                    and _nested_id(r, "work", "id") in work_map
+                )
+                if rid
+            },
+            assigned=True,
         )
 
         skipped: dict[str, int] = {}
@@ -178,8 +199,10 @@ class ContractorWorksService(BaseService):
         floors = await self.floor_manager.search(section_id__in=section_ids)
         return {f.raport_id: f.id for f in floors if f.raport_id}
 
-    async def _resolve(self, manager: Any, raport_ids: Iterable[str]) -> dict[str, UUID]:
+    async def _resolve(self, manager: Any, raport_ids: Iterable[str], *, assigned: bool = False) -> dict[str, UUID]:
         ids = sorted({rid for rid in raport_ids if rid})
+        if assigned:
+            self.access.grant_assigned_contractors(ids)
         resolved: dict[str, UUID] = {}
         for start in range(0, len(ids), self._RESOLVE_CHUNK):
             rows = await manager.search(raport_id__in=ids[start : start + self._RESOLVE_CHUNK])

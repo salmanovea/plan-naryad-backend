@@ -2,6 +2,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from src.api.access import plan_access
 from src.api.schemes import (
     DataResponseSchema,
     ListDataResponseSchema,
@@ -26,7 +27,7 @@ from src.services.housing.service import HousingService, get_housing_service
 from src.utils.helpers import catch_all_exceptions, get_responses, pagination_params
 from src.api.schemes import PaginationParams
 
-housing_router = APIRouter(prefix="/housings", tags=["Housing"])
+housing_router = APIRouter(prefix="/housings", tags=["Housing"], dependencies=[Depends(plan_access)])
 
 
 @housing_router.get("/", responses=get_responses(ResponseGroup.ALL_ERRORS))
@@ -45,10 +46,8 @@ async def list_housings(
             return ListDataResponseSchema[HousingSchema].create(list_data=[], pagination=pagination, total=0)
         filter_data["construction_object_id__in"] = object_ids
 
-    items = await service.housing_manager.search(
-        search=search_text, order_by=["name"], pagination=pagination, **filter_data
-    )
-    total = await service.housing_manager.count(search=search_text, **filter_data)
+    items = await service.search_housing(search=search_text, order_by=["name"], pagination=pagination, **filter_data)
+    total = await service.count_housing(search=search_text, **filter_data)
     enriched = await service.with_queue(items)
     return ListDataResponseSchema[HousingSchema].create(
         list_data=[HousingSchema.model_validate(i) for i in enriched],
@@ -63,7 +62,7 @@ async def get_housing(
     housing_id: UUID,
     service: HousingService = Depends(get_housing_service),
 ) -> DataResponseSchema[HousingSchema]:
-    item = await service.housing_manager.get_by_id(housing_id)
+    item = await service.get_housing(housing_id)
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Housing not found")
     return DataResponseSchema[HousingSchema](data=HousingSchema.model_validate(item))
@@ -75,14 +74,14 @@ async def get_housing_structure(
     housing_id: UUID,
     service: HousingService = Depends(get_housing_service),
 ) -> DataResponseSchema[HousingStructureSchema]:
-    housing = await service.housing_manager.get_by_id(housing_id)
+    housing = await service.get_housing(housing_id)
     if not housing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Housing not found")
 
-    sections = await service.section_manager.search(housing_id=housing_id, order_by=["section_number"])
+    sections = await service.search_section(housing_id=housing_id, order_by=["section_number"])
     section_list = []
     for section in sections:
-        floors = await service.floor_manager.search(section_id=section.id, order_by=["floor_number"])
+        floors = await service.search_floor(section_id=section.id, order_by=["floor_number"])
         section_list.append(
             SectionInStructure(
                 section_id=section.id,
@@ -107,7 +106,7 @@ async def create_housing(
     body: CreateHousingRequest,
     service: HousingService = Depends(get_housing_service),
 ) -> DataResponseSchema[HousingSchema]:
-    item = await service.housing_manager.create(body.model_dump())
+    item = await service.create_housing(body.model_dump())
     return DataResponseSchema[HousingSchema](data=HousingSchema.model_validate(item))
 
 
@@ -118,7 +117,7 @@ async def update_housing(
     body: UpdateHousingRequest,
     service: HousingService = Depends(get_housing_service),
 ) -> DataResponseSchema[HousingSchema]:
-    item = await service.housing_manager.update_by_id(housing_id, body.model_dump(exclude_none=True))
+    item = await service.update_housing(housing_id, body.model_dump(exclude_none=True))
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Housing not found")
     return DataResponseSchema[HousingSchema](data=HousingSchema.model_validate(item))
@@ -130,7 +129,7 @@ async def delete_housing(
     housing_id: UUID,
     service: HousingService = Depends(get_housing_service),
 ) -> DataResponseSchema[dict]:
-    await service.housing_manager.delete_by_id(housing_id)
+    await service.delete_housing(housing_id)
     return DataResponseSchema[dict](data={"deleted": str(housing_id)})
 
 
@@ -143,7 +142,7 @@ async def list_sections(
     housing_id: UUID,
     service: HousingService = Depends(get_housing_service),
 ) -> ListDataResponseSchema[SectionSchema]:
-    items = await service.section_manager.search(housing_id=housing_id, order_by=["section_number"])
+    items = await service.search_section(housing_id=housing_id, order_by=["section_number"])
     return ListDataResponseSchema[SectionSchema].create(
         list_data=[SectionSchema.model_validate(i) for i in items],
     )
@@ -158,7 +157,7 @@ async def create_section(
 ) -> DataResponseSchema[SectionSchema]:
     data = body.model_dump()
     data["housing_id"] = housing_id
-    item = await service.section_manager.create(data)
+    item = await service.create_section(data)
     return DataResponseSchema[SectionSchema](data=SectionSchema.model_validate(item))
 
 
@@ -169,7 +168,7 @@ async def update_section(
     body: UpdateSectionRequest,
     service: HousingService = Depends(get_housing_service),
 ) -> DataResponseSchema[SectionSchema]:
-    item = await service.section_manager.update_by_id(section_id, body.model_dump(exclude_none=True))
+    item = await service.update_section(section_id, body.model_dump(exclude_none=True))
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Section not found")
     return DataResponseSchema[SectionSchema](data=SectionSchema.model_validate(item))
@@ -181,7 +180,7 @@ async def delete_section(
     section_id: UUID,
     service: HousingService = Depends(get_housing_service),
 ) -> DataResponseSchema[dict]:
-    await service.section_manager.delete_by_id(section_id)
+    await service.delete_section(section_id)
     return DataResponseSchema[dict](data={"deleted": str(section_id)})
 
 
@@ -194,7 +193,7 @@ async def list_floors(
     section_id: UUID,
     service: HousingService = Depends(get_housing_service),
 ) -> ListDataResponseSchema[FloorSchema]:
-    items = await service.floor_manager.search(section_id=section_id, order_by=["floor_number"])
+    items = await service.search_floor(section_id=section_id, order_by=["floor_number"])
     return ListDataResponseSchema[FloorSchema].create(
         list_data=[FloorSchema.model_validate(i) for i in items],
     )
@@ -213,7 +212,7 @@ async def create_floor(
 ) -> DataResponseSchema[FloorSchema]:
     data = body.model_dump()
     data["section_id"] = section_id
-    item = await service.floor_manager.create(data)
+    item = await service.create_floor(data)
     return DataResponseSchema[FloorSchema](data=FloorSchema.model_validate(item))
 
 
@@ -224,7 +223,7 @@ async def update_floor(
     body: UpdateFloorRequest,
     service: HousingService = Depends(get_housing_service),
 ) -> DataResponseSchema[FloorSchema]:
-    item = await service.floor_manager.update_by_id(floor_id, body.model_dump(exclude_none=True))
+    item = await service.update_floor(floor_id, body.model_dump(exclude_none=True))
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Floor not found")
     return DataResponseSchema[FloorSchema](data=FloorSchema.model_validate(item))
@@ -236,5 +235,5 @@ async def delete_floor(
     floor_id: UUID,
     service: HousingService = Depends(get_housing_service),
 ) -> DataResponseSchema[dict]:
-    await service.floor_manager.delete_by_id(floor_id)
+    await service.delete_floor(floor_id)
     return DataResponseSchema[dict](data={"deleted": str(floor_id)})

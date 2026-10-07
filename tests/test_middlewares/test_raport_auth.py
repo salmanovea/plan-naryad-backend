@@ -1,7 +1,7 @@
 """Authentication against Keycloak's keys plus Raport's permission model.
 
 The cases here are the ones a plausible-looking implementation gets wrong: a forged token that
-carries a valid `kid`, an expired one, a user whose groups do not match, an outage that must not
+carries a valid `kid`, an expired one, an inactive user, an outage that must not
 be mistaken for a refusal, and a cache that outlives the token it was built from.
 """
 
@@ -50,7 +50,6 @@ def make_token(key: jwk.JWK = _realm_key, **overrides) -> str:
 def make_settings(**overrides) -> AuthSettings:
     defaults = {
         "auth_enabled": True,
-        "auth_allowed_groups": "superuser,plan_naryad",
         "auth_service_clients": "",
         "auth_authz_mode": "users-me",
         "keycloak_server_url": "https://keycloak.test",
@@ -141,7 +140,7 @@ class TestKeycloakId:
 
 
 class TestAuthenticate:
-    async def test_authenticates_a_user_with_an_allowed_group(self):
+    async def test_authenticates_a_user_from_the_raport_profile(self):
         with mock_raport():
             credentials, user = await make_backend().authenticate(make_conn(token=make_token()))
         assert "authenticated" in credentials.scopes
@@ -160,11 +159,15 @@ class TestAuthenticate:
         # The whole point of verifying locally: garbage never reaches Raport.
         assert get.call_count == 0
 
-    async def test_403_for_a_user_outside_the_allowed_groups(self):
-        with mock_raport(200, {**USER, "groups": ["factgathering_user"]}):
-            with pytest.raises(AuthenticationError) as e:
-                await make_backend().authenticate(make_conn(token=make_token()))
-        assert e.value.status_code == 403
+    @pytest.mark.parametrize(
+        "groups",
+        [["superuser"], ["factgathering_user"], ["contractor"], ["plan_naryad"], ["unknown"], []],
+    )
+    async def test_authenticates_regardless_of_business_groups(self, groups):
+        with mock_raport(200, {**USER, "groups": groups}):
+            credentials, user = await make_backend().authenticate(make_conn(token=make_token()))
+        assert "authenticated" in credentials.scopes
+        assert user.groups == set(groups)
 
     async def test_403_for_a_user_raport_marks_inactive(self):
         with mock_raport(200, {**USER, "is_active": False}):
@@ -200,11 +203,15 @@ class TestAuthenticate:
             await make_backend(jwks=jwks).authenticate(make_conn(token=make_token()))
         assert e.value.status_code == 503
 
-    async def test_service_client_skips_the_group_check(self):
+    @pytest.mark.parametrize("machine_marker", ["preferred_username", "client_id", "clientId"])
+    async def test_service_client_authenticates_without_a_user_profile(self, machine_marker):
         settings = make_settings(auth_service_clients="raport-scheduler")
+        marker_value = (
+            "service-account-raport-scheduler" if machine_marker == "preferred_username" else "raport-scheduler"
+        )
         with mock_raport() as get:
             credentials, user = await make_backend(settings).authenticate(
-                make_conn(token=make_token(azp="raport-scheduler"))
+                make_conn(token=make_token(azp="raport-scheduler", **{machine_marker: marker_value}))
             )
         assert isinstance(user, ServiceUser)
         assert "service" in credentials.scopes
@@ -213,6 +220,41 @@ class TestAuthenticate:
         assert user.data["id"] is None
         # A machine caller has no Raport profile to fetch.
         assert get.call_count == 0
+
+    @pytest.mark.parametrize("machine_marker", ["preferred_username", "client_id", "clientId"])
+    @pytest.mark.parametrize("allowed_clients", ["", "raport-scheduler"], ids=["empty-allowlist", "other-client"])
+    @pytest.mark.parametrize("cached_profile", [False, True], ids=["uncached", "cached-superuser"])
+    async def test_unlisted_machine_is_rejected_before_user_permissions(
+        self, machine_marker, allowed_clients, cached_profile
+    ):
+        backend = make_backend(make_settings(auth_service_clients=allowed_clients))
+        profile = {**USER, "groups": ["superuser"], "is_admin": True}
+        if cached_profile:
+            await backend.cache.set("kc-1", profile, 120)
+        marker_value = (
+            "service-account-unlisted-client" if machine_marker == "preferred_username" else "unlisted-client"
+        )
+        token = make_token(azp="unlisted-client", **{machine_marker: marker_value})
+        with (
+            patch.object(backend.cache, "get", AsyncMock(wraps=backend.cache.get)) as cache_get,
+            patch.object(backend.authz, "fetch", AsyncMock(return_value=profile)) as fetch_profile,
+        ):
+            with pytest.raises(AuthenticationError) as error:
+                await backend.authenticate(make_conn(token=token))
+
+        assert error.value.status_code == 403
+        cache_get.assert_not_awaited()
+        fetch_profile.assert_not_awaited()
+
+    @pytest.mark.parametrize("allowed_clients", ["", "raport-scheduler"], ids=["empty-allowlist", "listed-client"])
+    async def test_human_token_of_service_client_is_not_a_machine(self, allowed_clients):
+        settings = make_settings(auth_service_clients=allowed_clients)
+        with mock_raport() as get:
+            _, user = await make_backend(settings).authenticate(
+                make_conn(token=make_token(azp="raport-scheduler", preferred_username="person"))
+            )
+        assert not isinstance(user, ServiceUser)
+        assert get.call_count == 1
 
     async def test_public_routes_and_preflight_skip_the_check(self):
         backend = make_backend(public_route_prefixes=("/pn/admin",))
@@ -292,6 +334,35 @@ class TestAuthzMode:
 
 
 class TestCache:
+    async def test_disabled_user_is_rechecked_after_ttl(self):
+        backend = make_backend()
+        with mock_raport():
+            await backend.authenticate(make_conn(token=make_token()))
+        _, permissions = backend.cache._local["kc-1"]
+        backend.cache._local["kc-1"] = (time.time() - 1, permissions)
+        with mock_raport(200, {**USER, "is_active": False}) as get:
+            with pytest.raises(AuthenticationError) as error:
+                await backend.authenticate(make_conn(token=make_token()))
+        assert get.call_count == 1
+        assert error.value.status_code == 403
+
+    async def test_changed_assignments_are_rechecked_after_ttl(self):
+        backend = make_backend()
+        with mock_raport(200, {**USER, "projects": [{"id": "old"}]}):
+            _, first = await backend.authenticate(make_conn(token=make_token()))
+        assert first.data["projects"] == [{"id": "old"}]
+        _, permissions = backend.cache._local["kc-1"]
+        backend.cache._local["kc-1"] = (time.time() - 1, permissions)
+        with mock_raport(200, {**USER, "projects": [], "contractors": []}) as get:
+            _, second = await backend.authenticate(make_conn(token=make_token()))
+        assert get.call_count == 1
+        assert second.data["projects"] == second.data["contractors"] == []
+
+    def test_permission_namespaces_separate_authz_sources(self):
+        first = make_backend(make_settings(auth_authz_mode="users-me"))
+        second = make_backend(make_settings(auth_authz_mode="authz"))
+        assert first.cache._prefix != second.cache._prefix
+
     async def test_second_request_of_the_same_user_does_not_hit_raport(self):
         backend = make_backend()
         with mock_raport() as get:
@@ -300,9 +371,9 @@ class TestCache:
         # Keyed by user, not by token: a refreshed token reuses the same answer.
         assert get.call_count == 1
 
-    async def test_a_refusal_is_cached_too(self):
+    async def test_raport_user_refusal_is_cached(self):
         backend = make_backend()
-        with mock_raport(200, {**USER, "groups": ["factgathering_user"]}) as get:
+        with mock_raport(404, {"error": "not found"}) as get:
             for _ in range(3):
                 with pytest.raises(AuthenticationError) as e:
                     await backend.authenticate(make_conn(token=make_token()))
@@ -365,16 +436,15 @@ class TestSettingsIsolation:
         # refused to build and the service would not start at all.
         from src.config.settings import AppConfig
 
-        monkeypatch.setenv("AUTH_ALLOWED_GROUPS", "superuser")
+        monkeypatch.setenv("AUTH_SERVICE_CLIENTS", "raport-scheduler")
         monkeypatch.setenv("AUTH_AUTHZ_MODE", "authz")
         monkeypatch.setenv("SOME_OTHER_BLOCK_SETTING", "x")
         assert AppConfig().project_title
 
 
 class TestSettingsValidation:
-    def test_empty_group_list_is_a_startup_error(self):
-        with pytest.raises(RuntimeError, match="AUTH_ALLOWED_GROUPS"):
-            validate_auth_settings(make_settings(auth_allowed_groups=""))
+    def test_enabled_auth_starts_without_a_group_allowlist(self):
+        validate_auth_settings(make_settings(_env_file=None))
 
     def test_missing_keycloak_or_raport_is_a_startup_error(self):
         with pytest.raises(RuntimeError, match="KEYCLOAK_SERVER_URL"):
@@ -387,4 +457,4 @@ class TestSettingsValidation:
             validate_auth_settings(make_settings(auth_authz_mode="magic"))
 
     def test_disabled_auth_needs_no_configuration(self):
-        validate_auth_settings(make_settings(auth_enabled=False, auth_allowed_groups="", report_api_url=None))
+        validate_auth_settings(make_settings(auth_enabled=False, report_api_url=None))

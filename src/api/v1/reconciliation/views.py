@@ -3,6 +3,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from src.api.access import plan_access
 from src.api.schemes import (
     DataResponseSchema,
     ListDataResponseSchema,
@@ -20,7 +21,9 @@ from src.api.v1.reconciliation.schemes import (
 from src.services.reconciliation.service import ReconciliationService, get_reconciliation_service
 from src.utils.helpers import catch_all_exceptions, get_responses, pagination_params
 
-reconciliation_router = APIRouter(prefix="/reconciliation", tags=["Reconciliation"])
+reconciliation_router = APIRouter(
+    prefix="/reconciliation", tags=["Reconciliation"], dependencies=[Depends(plan_access)]
+)
 
 
 @reconciliation_router.post("/run", responses=get_responses(ResponseGroup.ALL_ERRORS))

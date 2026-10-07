@@ -116,6 +116,21 @@ class TestAuthenticate:
 
 
 class TestCallback:
+    async def test_inactive_superuser_cannot_get_a_session(self):
+        session = {"oauth": {"state": "s1", "verifier": "v1"}}
+        response, request = await run_callback(session, "code=c1&state=s1", {**SUPERUSER, "is_active": False})
+        assert response.status_code == 403
+        assert "admin" not in request.session
+
+    async def test_config_cannot_grant_admin_to_contractor(self):
+        app_config.admin_allowed_groups = "contractor"
+        session = {"oauth": {"state": "s1", "verifier": "v1"}}
+        response, request = await run_callback(
+            session, "code=c1&state=s1", {**MERE_MORTAL, "groups": ["contractor", "factgathering_user"]}
+        )
+        assert response.status_code == 403
+        assert "admin" not in request.session
+
     async def test_superuser_gets_a_session(self):
         session = {"oauth": {"state": "s1", "verifier": "v1"}}
         response, request = await run_callback(session, "code=c1&state=s1")

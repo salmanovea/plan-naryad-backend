@@ -1,3 +1,4 @@
+from src.models.managers.access import AccessManager
 from src.models.managers.housing import FloorManager, HousingManager, SectionManager
 from src.models.managers.project_structure import ConstructionObjectManager, ProjectManager, QueueManager
 from src.models.managers.work import (

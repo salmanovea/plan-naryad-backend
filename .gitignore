@@ -9,3 +9,5 @@ __pycache__/
 .pytest_cache/
 htmlcov/
 .coverage
+/.codex/
+/AGENTS.md

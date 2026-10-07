@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.models.dbo.tables.reconciliation import DailySummary, ReconciliationResult
+from src.models.managers.access import IdQuery
 from src.models.managers.common import BaseManager
 
 
@@ -38,9 +39,11 @@ class ReconciliationResultManager(BaseManager[ReconciliationResult]):
         rows = await self.fetch(query)
         return rows[0] if rows else None
 
-    async def delete_by_date_and_housing(self, target_date: date, housing_id: UUID) -> int:
+    async def delete_by_date_and_housing(
+        self, target_date: date, housing_id: UUID, allowed_ids: IdQuery | None = None
+    ) -> int:
         """Delete all results for a (date, housing); returns the count removed."""
-        existing = await self.search(date=target_date, housing_id=housing_id)
+        existing = await self.search(date=target_date, housing_id=housing_id, id__in=allowed_ids)
         ids = [e.id for e in existing]
         await self.bulk_delete(ids)
         return len(ids)
@@ -68,9 +71,11 @@ class DailySummaryManager(BaseManager[DailySummary]):
         rows = await self.fetch(query)
         return rows[0] if rows else None
 
-    async def delete_by_date_and_housing(self, target_date: date, housing_id: UUID) -> int:
+    async def delete_by_date_and_housing(
+        self, target_date: date, housing_id: UUID, allowed_ids: IdQuery | None = None
+    ) -> int:
         """Delete all summaries for a (date, housing); returns the count removed."""
-        existing = await self.search(date=target_date, housing_id=housing_id)
+        existing = await self.search(date=target_date, housing_id=housing_id, id__in=allowed_ids)
         ids = [e.id for e in existing]
         await self.bulk_delete(ids)
         return len(ids)

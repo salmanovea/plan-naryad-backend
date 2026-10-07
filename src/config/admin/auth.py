@@ -26,6 +26,8 @@ from starlette.responses import PlainTextResponse, RedirectResponse, Response
 
 from src.config.logger import LoggerProvider
 from src.config.settings import app_config
+from src.services.access.schemes import AccessScope, PlanRole
+from src.utils.exceptions import AccessDenied
 from src.external.report.auth import get_report_service_token
 from src.middlewares.raport_auth.authz import AuthzClient, AuthzUnavailable, PermissionsDenied
 from src.middlewares.raport_auth.jwks import KeycloakUnavailable, TokenInvalid, keycloak_id_from, verify_token
@@ -112,7 +114,7 @@ class AdminSSOAuth(AuthenticationBackend):
 
         groups = set(profile.get("groups") or [])
         allowed = app_config.admin_groups
-        if not groups & allowed:
+        if profile.get("is_active") is False or "superuser" not in groups or not groups & allowed:
             log.info(f"Admin sign-in refused for {keycloak_id}: groups={sorted(groups)}, allowed={sorted(allowed)}")
             return _forbidden("Админка доступна только группе superuser.")
 
@@ -176,3 +178,13 @@ def build_admin_auth(base_url: str) -> Optional[AdminSSOAuth]:
         secret_key=app_config.admin_session_secret or secrets.token_urlsafe(32),
         base_url=base_url,
     )
+
+
+def admin_access_scope(request: Request) -> AccessScope:
+    """Explicit context for admin actions; SQLAdmin has already checked its signed session."""
+    if not app_config.auth_enabled:
+        return AccessScope(PlanRole.LOCAL)
+    admin = request.session.get("admin") or {}
+    if admin.get("expires_at", 0) <= time.time():
+        raise AccessDenied("Требуется действующая сессия администратора.")
+    return AccessScope(PlanRole.ADMIN)

@@ -16,12 +16,8 @@ class AuthSettings(BaseSettings):
     # Master switch. Off by default so a fresh checkout and the test suite run without Keycloak.
     auth_enabled: bool = False
 
-    # Raport group names allowed into the service, comma-separated. There is no default on
-    # purpose: an empty list with auth enabled is a configuration error, not «everyone in».
-    auth_allowed_groups: str = ""
-
-    # Keycloak clients (`azp`) whose tokens are machine calls — schedulers, other services.
-    # They skip the group check: a service account has no business being in a human group.
+    # Allowlisted clients; tokens also need service-account claims, not just `azp`.
+    # Machine callers have no user profile; business operation permissions belong to the service.
     auth_service_clients: str = ""
 
     # Expected `aud`. Empty means «do not check» — Keycloak has no audience mapper for us yet,
@@ -31,7 +27,7 @@ class AuthSettings(BaseSettings):
     # Where the user's permissions come from:
     #   "authz"    — GET /api/v1/authz/users/{keycloak_id}, the target read-only endpoint;
     #   "users-me" — GET /api/v1/users/me with the user's own token, until Raport ships authz.
-    auth_authz_mode: str = "users-me"
+    auth_authz_mode: str = "authz"
     auth_authz_path: str = "/api/v1/authz/users/{keycloak_id}"
     auth_me_path: str = "/api/v1/users/me"
 
@@ -53,10 +49,6 @@ class AuthSettings(BaseSettings):
     keycloak_verify_ssl: bool = True
     report_api_url: Optional[str] = None
     redis_url: Optional[str] = None
-
-    @property
-    def allowed_groups(self) -> set[str]:
-        return {group.strip() for group in self.auth_allowed_groups.split(",") if group.strip()}
 
     @property
     def service_clients(self) -> set[str]:
@@ -85,17 +77,11 @@ auth_settings = AuthSettings()
 
 
 def validate_auth_settings(settings: AuthSettings = auth_settings) -> None:
-    """Fail at startup rather than let a half-configured service run wide open.
-
-    Everything here is a mistake that would otherwise show up as «somehow everybody has access»
-    or as a 503 storm at three in the morning.
-    """
+    """Validate the token-verification and Raport connection settings at startup."""
     if not settings.auth_enabled:
         return
 
     problems = []
-    if not settings.allowed_groups:
-        problems.append("AUTH_ALLOWED_GROUPS is empty — with auth enabled that would let any user in")
     if not settings.keycloak_server_url or not settings.keycloak_realm:
         problems.append("KEYCLOAK_SERVER_URL and KEYCLOAK_REALM are required to verify token signatures")
     if not settings.report_base_url:
