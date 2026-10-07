@@ -4,6 +4,7 @@ Order of work on every request: verify the token locally against Keycloak's keys
 the common case), resolve the user's profile through Raport (cached), then check its activity.
 Business roles and operation permissions are checked by the API's access dependency.
 Machine callers have an allowlisted client AND service-account claims and skip profile resolution.
+Recognized machine tokens from unlisted clients are rejected before any user-profile lookup.
 
 Error codes are deliberate:
 
@@ -185,7 +186,9 @@ class RaportAuthBackend(AuthenticationBackend):
             or claims.get("client_id") == client_id
             or claims.get("clientId") == client_id
         )
-        if is_machine and client_id in self.settings.service_clients:
+        if is_machine:
+            if client_id not in self.settings.service_clients:
+                raise auth_error("Сервисный клиент не разрешён.", 403)
             return AuthCredentials(["authenticated", "service"]), ServiceUser(str(client_id), claims)
 
         keycloak_id = keycloak_id_from(claims)

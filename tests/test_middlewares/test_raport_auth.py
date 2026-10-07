@@ -203,13 +203,15 @@ class TestAuthenticate:
             await make_backend(jwks=jwks).authenticate(make_conn(token=make_token()))
         assert e.value.status_code == 503
 
-    async def test_service_client_authenticates_without_a_user_profile(self):
+    @pytest.mark.parametrize("machine_marker", ["preferred_username", "client_id", "clientId"])
+    async def test_service_client_authenticates_without_a_user_profile(self, machine_marker):
         settings = make_settings(auth_service_clients="raport-scheduler")
+        marker_value = (
+            "service-account-raport-scheduler" if machine_marker == "preferred_username" else "raport-scheduler"
+        )
         with mock_raport() as get:
             credentials, user = await make_backend(settings).authenticate(
-                make_conn(
-                    token=make_token(azp="raport-scheduler", preferred_username="service-account-raport-scheduler")
-                )
+                make_conn(token=make_token(azp="raport-scheduler", **{machine_marker: marker_value}))
             )
         assert isinstance(user, ServiceUser)
         assert "service" in credentials.scopes
@@ -219,8 +221,34 @@ class TestAuthenticate:
         # A machine caller has no Raport profile to fetch.
         assert get.call_count == 0
 
-    async def test_human_token_of_service_client_is_not_a_machine(self):
-        settings = make_settings(auth_service_clients="raport-scheduler")
+    @pytest.mark.parametrize("machine_marker", ["preferred_username", "client_id", "clientId"])
+    @pytest.mark.parametrize("allowed_clients", ["", "raport-scheduler"], ids=["empty-allowlist", "other-client"])
+    @pytest.mark.parametrize("cached_profile", [False, True], ids=["uncached", "cached-superuser"])
+    async def test_unlisted_machine_is_rejected_before_user_permissions(
+        self, machine_marker, allowed_clients, cached_profile
+    ):
+        backend = make_backend(make_settings(auth_service_clients=allowed_clients))
+        profile = {**USER, "groups": ["superuser"], "is_admin": True}
+        if cached_profile:
+            await backend.cache.set("kc-1", profile, 120)
+        marker_value = (
+            "service-account-unlisted-client" if machine_marker == "preferred_username" else "unlisted-client"
+        )
+        token = make_token(azp="unlisted-client", **{machine_marker: marker_value})
+        with (
+            patch.object(backend.cache, "get", AsyncMock(wraps=backend.cache.get)) as cache_get,
+            patch.object(backend.authz, "fetch", AsyncMock(return_value=profile)) as fetch_profile,
+        ):
+            with pytest.raises(AuthenticationError) as error:
+                await backend.authenticate(make_conn(token=token))
+
+        assert error.value.status_code == 403
+        cache_get.assert_not_awaited()
+        fetch_profile.assert_not_awaited()
+
+    @pytest.mark.parametrize("allowed_clients", ["", "raport-scheduler"], ids=["empty-allowlist", "listed-client"])
+    async def test_human_token_of_service_client_is_not_a_machine(self, allowed_clients):
+        settings = make_settings(auth_service_clients=allowed_clients)
         with mock_raport() as get:
             _, user = await make_backend(settings).authenticate(
                 make_conn(token=make_token(azp="raport-scheduler", preferred_username="person"))
