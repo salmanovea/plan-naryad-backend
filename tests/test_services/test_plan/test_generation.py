@@ -4,7 +4,7 @@ Fixtures give one housing with two sections; section 1 has floors 1 and 2. The t
 sequence is written per test so each graph shape is explicit.
 """
 
-from datetime import date, datetime
+from datetime import date, datetime, time
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
@@ -26,7 +26,7 @@ WORK_B = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 CONTRACTOR = UUID("99999999-9999-9999-9999-999999999999")
 CONTRACTOR_2 = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
 
-TARGET = date(2026, 5, 20)
+TARGET = date(2030, 5, 20)
 
 
 async def _sequence(session, rows: list[dict]) -> None:
@@ -523,10 +523,13 @@ async def test_skipped_cells_surface_in_reasons(async_test_session):
     assert any("floor_not_synced=3" in r for r in reasons)
 
 
-def test_default_target_date_follows_the_cutoff():
-    """Night run targets today; a daytime run targets tomorrow (Р3)."""
-    assert default_target_date(datetime(2026, 5, 20, 3, 0)) == date(2026, 5, 20)
-    assert default_target_date(datetime(2026, 5, 20, 15, 0)) == date(2026, 5, 21)
+def test_default_target_date_follows_the_transfer_time():
+    """Night run targets today; a run past the transfer time targets tomorrow (Р3) — to the minute."""
+    at = time(10, 30)
+    assert default_target_date(at, datetime(2026, 5, 20, 3, 0)) == date(2026, 5, 20)
+    assert default_target_date(at, datetime(2026, 5, 20, 10, 29)) == date(2026, 5, 20)
+    assert default_target_date(at, datetime(2026, 5, 20, 10, 30)) == date(2026, 5, 21)
+    assert default_target_date(at, datetime(2026, 5, 20, 15, 0)) == date(2026, 5, 21)
 
 
 async def test_work_without_a_cell_is_not_planned_there(async_test_session):

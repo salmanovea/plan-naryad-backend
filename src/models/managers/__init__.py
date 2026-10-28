@@ -15,7 +15,7 @@ from src.models.managers.plan import PlanItemManager
 from src.models.managers.fact import WorkFactManager
 from src.models.managers.reconciliation import DailySummaryManager, ReconciliationResultManager
 from src.models.managers.alert import AlertManager
-from src.models.managers.settings import ActionLogManager, ContractorPositionLimitManager
+from src.models.managers.settings import ActionLogManager, ContractorPositionLimitManager, PlanSettingsManager
 from src.models.managers.workforce import (
     ArticleBDRManager,
     ArticleBDRWorkManager,

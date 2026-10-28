@@ -7,7 +7,7 @@ has their own percent. Volumes play no part any more — nobody sets a daily nor
 """
 
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from typing import List, Optional, Tuple
 from uuid import UUID
 
@@ -30,11 +30,14 @@ from src.services.common import SYSTEM_ACTOR, BaseService, floor_label
 from src.services.contractor_works import ContractorWorksService
 from src.services.report_cells import CellKey, HousingSlice, ReportCellsService
 from src.utils.business_time import business_now
+from src.utils.exceptions import PlanLocked
 
 log = LoggerProvider().get_logger(__name__)
 
 # Fallback for calls with no authenticated user: scheduler jobs and AUTH_ENABLED=false.
 UNKNOWN_ACTOR = SYSTEM_ACTOR
+
+TRANSFERRED_LOCK_MESSAGE = "Нельзя изменить позиции, которые уже переданы подрядчику."
 
 
 @dataclass
@@ -59,16 +62,43 @@ def _as_uuids(values: Optional[List[str]]) -> set[UUID]:
     return result
 
 
-def default_target_date(now: Optional[datetime] = None) -> date:
-    """Today before the transfer cutoff, tomorrow after it (decision Р3).
+def default_target_date(transfer_time: time, now: Optional[datetime] = None) -> date:
+    """Today before the transfer time, tomorrow after it (decision Р3).
 
     The 03:00 scheduled run lands on today; a run started during the day or the evening
     targets tomorrow, because today's positions have already gone to the contractors.
     """
     moment = now or business_now()
-    if moment.hour < app_config.plan_transfer_cutoff_hour:
+    if moment.time() < transfer_time:
         return moment.date()
     return moment.date() + timedelta(days=1)
+
+
+def is_day_closed(day: date, transfer_time: time, now: Optional[datetime] = None) -> bool:
+    """A day closes at its own transfer time, in business time; every earlier day is closed too."""
+    return (now or business_now()) >= datetime.combine(day, transfer_time)
+
+
+def last_closed_day(transfer_time: time, now: Optional[datetime] = None) -> date:
+    """The latest day whose transfer time has passed: today once it is reached, else yesterday."""
+    moment = now or business_now()
+    return moment.date() if moment.time() >= transfer_time else moment.date() - timedelta(days=1)
+
+
+def closed_day_message(day: date, transfer_time: time) -> str:
+    return (
+        f"Время передачи заданий подрядчику на {day:%d.%m.%Y} ({transfer_time:%H:%M}) прошло — "
+        "план-наряд на эту дату изменить нельзя."
+    )
+
+
+@dataclass(frozen=True)
+class DayLock:
+    """Whether a day can still be changed, and when it closes."""
+
+    day: date
+    transfer_time: time
+    closed: bool
 
 
 class AutogenerationService(BaseService):
@@ -88,9 +118,34 @@ class AutogenerationService(BaseService):
         self.tech_sequence_manager = managers.TechSequenceItemManager(db)
         self.contractor_manager = managers.ContractorManager(db)
         self.position_limit_manager = managers.ContractorPositionLimitManager(db)
+        self.settings_manager = managers.PlanSettingsManager(db)
         self.action_log_manager = managers.ActionLogManager(db)
         self.report_cells = ReportCellsService(db)
         self.contractor_works = ContractorWorksService(db)
+
+    # ── Transfer time: when a day goes to the contractors and closes ──────────
+
+    async def day_lock(self, day: date) -> DayLock:
+        """The day's transfer time from the admin settings, and whether it has passed."""
+        transfer_time = await self.settings_manager.get_transfer_time()
+        return DayLock(day=day, transfer_time=transfer_time, closed=is_day_closed(day, transfer_time))
+
+    async def target_date(self) -> date:
+        """The day an unscheduled generation targets — see `default_target_date`."""
+        return default_target_date(await self.settings_manager.get_transfer_time())
+
+    async def require_open_day(self, day: date) -> None:
+        """Refuse any change to a day past its transfer time — it has gone to the contractors."""
+        lock = await self.day_lock(day)
+        if lock.closed:
+            raise PlanLocked(closed_day_message(day, lock.transfer_time))
+
+    async def _require_editable(self, items: list[PlanItem]) -> None:
+        """Positions can be confirmed or deleted only as drafts of a day that is still open."""
+        if any(item.status == PlanStatus.TRANSFERRED.value for item in items):
+            raise PlanLocked(TRANSFERRED_LOCK_MESSAGE)
+        for day in sorted({item.date for item in items}):
+            await self.require_open_day(day)
 
     async def _authorize_filters(self, filters: dict) -> None:
         """Validate selectors declared by this domain's operations."""
@@ -151,10 +206,26 @@ class AutogenerationService(BaseService):
         total = await self.plan_item_manager.count(**filters)
         return [self._enrich_plan_item(i) for i in items], total
 
+    @staticmethod
+    def _plan_order(item: PlanItem) -> tuple:
+        """Section, floor, work, contractor — the order a day plan is read in.
+
+        Without it Postgres returns rows in storage order, and an update (a confirmation)
+        moves the row, so the table reshuffled under the user's cursor.
+        """
+        return (
+            item.section.section_number if item.section else 0,
+            item.floor.floor_number if item.floor else 0,
+            item.work.name if item.work else "",
+            item.contractor.name if item.contractor else "",
+            str(item.id),
+        )
+
     async def get_plan_items(self, order_by: Optional[List[str]] = None, **filters) -> List[PlanItemSchema]:
         """Fetch plan items (no pagination) with denormalized labels.
 
         `contractor_id` is the page-level «Подрядчик» selector, forced for an external user.
+        Without `order_by` the day comes in `_plan_order`.
         """
         contractor_ids = await self.access.contractor_filter(filters.pop("contractor_id", None))
         if contractor_ids is not None:
@@ -165,6 +236,8 @@ class AutogenerationService(BaseService):
             filters["id__in"] = allowed_ids
         query = self.plan_item_manager.get_enriched_query()
         items = await self.plan_item_manager.search(query=query, order_by=order_by, **filters)
+        if not order_by:
+            items = sorted(items, key=self._plan_order)
         return [self._enrich_plan_item(i) for i in items]
 
     async def get_plan_item(self, plan_item_id: UUID) -> Optional[PlanItemSchema]:
@@ -383,6 +456,10 @@ class AutogenerationService(BaseService):
         if not work:
             return None, "Работа не найдена."
 
+        lock = await self.day_lock(target_date)
+        if lock.closed:
+            return None, closed_day_message(target_date, lock.transfer_time)
+
         duplicate = await self.plan_item_manager.search(
             date=target_date,
             housing_id=housing_id,
@@ -426,20 +503,24 @@ class AutogenerationService(BaseService):
         return item, None
 
     async def confirm_item(self, plan_item_id: UUID, actor: str = UNKNOWN_ACTOR) -> Optional[PlanItem]:
-        """`draft` → `confirmed`. The spec has no way back — a wrong position is deleted."""
+        """Mark a draft as confirmed. The status stays `draft`: confirmation is a mark, not a step.
+
+        The spec has no way back — a wrong position is deleted. A position already confirmed is
+        returned as it is; one already transferred, or on a closed day, is refused.
+        """
         self.access.require_business_write()
         await self.access.require_plan_items([plan_item_id])
+        item = await self.plan_item_manager.get_by_id(plan_item_id)
+        if not item:
+            return None
+        await self._require_editable([item])
+        if item.rs_confirmed:
+            return item
         item = await self.plan_item_manager.update_by_id(
             plan_item_id,
-            {
-                "rs_confirmed": True,
-                "rs_confirmed_at": business_now(),
-                "rs_confirmed_by": actor,
-                "status": PlanStatus.CONFIRMED.value,
-            },
+            {"rs_confirmed": True, "rs_confirmed_at": business_now(), "rs_confirmed_by": actor},
         )
-        if item:
-            await self.log_action(ActionType.PLAN_ITEM_CONFIRM, plan_item_id, actor)
+        await self.log_action(ActionType.PLAN_ITEM_CONFIRM, plan_item_id, actor)
         return item
 
     async def delete_item(self, plan_item_id: UUID, actor: str = UNKNOWN_ACTOR) -> bool:
@@ -449,6 +530,7 @@ class AutogenerationService(BaseService):
         item = await self.plan_item_manager.get_by_id(plan_item_id)
         if not item:
             return False
+        await self._require_editable([item])
         await self.plan_item_manager.delete_by_id(plan_item_id)
         await self.log_action(ActionType.PLAN_ITEM_DELETE, plan_item_id, actor, {"date": str(item.date)})
         return True
@@ -457,36 +539,39 @@ class AutogenerationService(BaseService):
         """Confirm several positions at once.
 
         A day on one housing runs to ~136 positions, so confirming them one by one is not a
-        workable flow. Ids that do not exist are reported rather than silently ignored.
+        workable flow. Ids that do not exist are reported rather than silently ignored. The
+        selection is all or nothing: one transferred position or one closed day refuses it
+        whole. `confirmed` counts the positions newly marked.
         """
         self.access.require_business_write()
         await self.access.require_plan_items(plan_item_ids)
         items = await self.plan_item_manager.get_by_ids(list(set(plan_item_ids)))
         found = {item.id for item in items}
-        if items:
+        await self._require_editable(items)
+        pending = [item for item in items if not item.rs_confirmed]
+        if pending:
             confirmed_at = business_now()
             await self.plan_item_manager.bulk_update_by_batch(
                 [
-                    {
-                        "id": item.id,
-                        "rs_confirmed": True,
-                        "rs_confirmed_at": confirmed_at,
-                        "rs_confirmed_by": actor,
-                        "status": PlanStatus.CONFIRMED.value,
-                    }
-                    for item in items
+                    {"id": item.id, "rs_confirmed": True, "rs_confirmed_at": confirmed_at, "rs_confirmed_by": actor}
+                    for item in pending
                 ]
             )
-            for item in items:
+            for item in pending:
                 await self.log_action(ActionType.PLAN_ITEM_CONFIRM, item.id, actor)
-        return {"confirmed": len(found), "not_found": [str(i) for i in set(plan_item_ids) - found]}
+        return {"confirmed": len(pending), "not_found": [str(i) for i in set(plan_item_ids) - found]}
 
     async def delete_items(self, plan_item_ids: list[UUID], actor: str = UNKNOWN_ACTOR) -> dict:
-        """Delete several positions at once — the group counterpart of `delete_item`."""
+        """Delete several positions at once — the group counterpart of `delete_item`.
+
+        All or nothing, like `confirm_items`: a transferred position or a closed day refuses
+        the whole selection.
+        """
         self.access.require_business_write()
         await self.access.require_plan_items(plan_item_ids)
         items = await self.plan_item_manager.get_by_ids(list(set(plan_item_ids)))
         found = {item.id for item in items}
+        await self._require_editable(items)
         if items:
             for item in items:
                 await self.log_action(ActionType.PLAN_ITEM_DELETE, item.id, actor, {"date": str(item.date)})
@@ -500,15 +585,15 @@ class AutogenerationService(BaseService):
         housing_id: Optional[UUID] = None,
         section_id: Optional[UUID] = None,
     ) -> dict:
-        """Hand the day over to the contractors.
+        """Hand one day over to the contractors right now, whatever the time.
 
-        Per the spec, once the cutoff passes every position that was not deleted goes to the
-        contractor whether or not it was confirmed — so both `draft` and `confirmed` move.
-        Idempotent: positions already transferred are left alone.
+        The scheduled path is `transfer_due`; this one is for operators and debugging. Every
+        draft moves, confirmed or not — the spec is explicit about that. Idempotent: positions
+        already transferred are left alone.
         """
         self.access.require_business_write()
         await self._authorize_filters({"housing_id": housing_id, "section_id": section_id})
-        scope: dict = {"date": target_date, "status__in": [PlanStatus.DRAFT.value, PlanStatus.CONFIRMED.value]}
+        scope: dict = {"date": target_date, "status": PlanStatus.DRAFT.value}
         if housing_id:
             scope["housing_id"] = housing_id
         if section_id:
@@ -522,6 +607,29 @@ class AutogenerationService(BaseService):
         )
         log.info("plan: transferred %d positions for %s", len(items), target_date)
         return {"transferred": len(items)}
+
+    async def transfer_due(self, now: Optional[datetime] = None) -> dict:
+        """Hand over every draft of every day whose transfer time has passed.
+
+        Raport's scheduler calls this every few minutes, so the transfer time lives in one place
+        — the admin settings — and changing it needs no deploy. Earlier days are swept as well:
+        a run that failed or was skipped is caught up by the next one instead of leaving a day
+        undelivered. Idempotent.
+        """
+        self.access.require_business_write()
+        transfer_time = await self.settings_manager.get_transfer_time()
+        until = last_closed_day(transfer_time, now)
+        items = await self.plan_item_manager.search(
+            status=PlanStatus.DRAFT.value, date__lte=until, id__in=self.access.plan_item_ids()
+        )
+        if not items:
+            return {"transferred": 0, "until": until, "dates": []}
+        await self.plan_item_manager.bulk_update_by_batch(
+            [{"id": item.id, "status": PlanStatus.TRANSFERRED.value} for item in items]
+        )
+        dates = sorted({item.date for item in items})
+        log.info("plan: transferred %d positions over %d day(s) up to %s", len(items), len(dates), until)
+        return {"transferred": len(items), "until": until, "dates": dates}
 
     async def log_action(
         self,
@@ -672,10 +780,14 @@ class AutogenerationService(BaseService):
         insert share one short transaction — so neither a failure in between nor an empty
         answer from Raport can leave the day empty.
 
+        A day past its transfer time is refused outright (`PlanLocked`), and so is a re-run over
+        positions already transferred — those belong to the contractor now.
+
         `reasons` explains an empty result in the spec's own wording.
         """
         self.access.require_business_write()
         await self.access.require_location(housing_id, section_id)
+        await self.require_open_day(target_date)
         reasons: List[str] = []
         await self.log_action(
             ActionType.PLAN_GENERATE,
@@ -696,6 +808,8 @@ class AutogenerationService(BaseService):
         existing = await self.plan_item_manager.search(**scope, id__in=self.access.plan_item_ids())
         if existing and not force:
             return existing, reasons
+        if any(item.status == PlanStatus.TRANSFERRED.value for item in existing):
+            raise PlanLocked(TRANSFERRED_LOCK_MESSAGE)
 
         housing_nodes, section_nodes = await self._load_tech_nodes(housing_id)
         if not housing_nodes and not section_nodes:

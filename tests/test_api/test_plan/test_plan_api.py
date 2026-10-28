@@ -3,7 +3,9 @@ from uuid import UUID, uuid4
 import pytest
 
 from tests.constants import API
-from datetime import date
+
+# A day far ahead: mutations are refused once a day's transfer time has passed.
+OPEN_DAY = "2030-02-01"
 
 HOUSING_1_ID = "11111111-1111-1111-1111-111111111111"
 SECTION_1_ID = "33333333-3333-3333-3333-333333333333"
@@ -51,7 +53,7 @@ async def test_list_plan_items_returns_200(client):
 async def test_get_daily_plan_returns_200(client):
     response = await client.get(
         f"{API}/plan-naryad/daily",
-        params={"target_date": str(date.today()), "housing_id": HOUSING_1_ID},
+        params={"target_date": OPEN_DAY, "housing_id": HOUSING_1_ID},
     )
 
     assert response.status_code == 200
@@ -65,7 +67,7 @@ async def test_create_plan_item_returns_201(client):
     response = await client.post(
         f"{API}/plan-naryad/",
         json={
-            "date": str(date.today()),
+            "date": OPEN_DAY,
             "housing_id": HOUSING_1_ID,
             "section_id": SECTION_1_ID,
             "floor_id": FLOOR_1_ID,
@@ -116,8 +118,8 @@ async def test_list_plan_items_with_filters(client):
         f"{API}/plan-naryad/",
         params={
             "housing_id": HOUSING_1_ID,
-            "date_from": str(date.today()),
-            "date_to": str(date.today()),
+            "date_from": OPEN_DAY,
+            "date_to": OPEN_DAY,
         },
     )
 
@@ -135,7 +137,7 @@ async def test_get_daily_plan_accepts_section_filter(client):
     response = await client.get(
         f"{API}/plan-naryad/daily",
         params={
-            "target_date": str(date.today()),
+            "target_date": OPEN_DAY,
             "housing_id": HOUSING_1_ID,
             "section_id": SECTION_1_ID,
         },
@@ -153,7 +155,7 @@ async def test_generate_plan_accepts_section(client):
     response = await client.post(
         f"{API}/plan-naryad/generate",
         json={
-            "date": str(date.today()),
+            "date": OPEN_DAY,
             "housing_id": HOUSING_1_ID,
             "section_id": SECTION_1_ID,
             "force": True,
@@ -168,7 +170,7 @@ async def test_generate_plan_accepts_section(client):
 async def test_generate_plan_on_non_empty_day_asks_for_confirmation(client):
     """Positions already there → 409 with the warning text from the spec."""
     payload = {
-        "date": str(date.today()),
+        "date": OPEN_DAY,
         "housing_id": HOUSING_1_ID,
         "section_id": SECTION_1_ID,
     }
@@ -195,7 +197,7 @@ CONTRACTOR_ID_ENR = "99999999-9999-9999-9999-999999999999"
 
 async def test_daily_plan_items_are_enriched(client):
     """daily plan items carry section/floor/contractor names (issue 11)."""
-    enr_date = "2025-04-04"
+    enr_date = "2030-04-04"
     await client.post(
         f"{API}/plan-naryad/",
         json={
@@ -229,7 +231,7 @@ async def test_bulk_delete_deletes_rows_and_survives_reconciliation_links(client
     survive with its link nulled instead of blowing the request up with an FK error.
     The check runs through the API — a separate session — so a lost commit fails here.
     """
-    target = "2025-04-05"
+    target = "2030-04-05"
     created = await client.post(
         f"{API}/plan-naryad/",
         json={
@@ -251,7 +253,7 @@ async def test_bulk_delete_deletes_rows_and_survives_reconciliation_links(client
 
     result = await managers.ReconciliationResultManager(async_test_session).create(
         {
-            "date": date_type(2025, 4, 5),
+            "date": date_type(2030, 4, 5),
             "housing_id": UUID(HOUSING_1_ID),
             "section_id": UUID(SECTION_1_ID),
             "floor_id": UUID(FLOOR_1_ID),
@@ -320,7 +322,7 @@ async def test_generate_response_carries_labels(client, async_test_session, monk
 
     response = await client.post(
         f"{API}/plan-naryad/generate",
-        json={"date": "2025-04-06", "housing_id": HOUSING_1_ID, "force": True},
+        json={"date": "2030-04-06", "housing_id": HOUSING_1_ID, "force": True},
     )
 
     assert response.status_code == 200, response.json()
@@ -330,3 +332,29 @@ async def test_generate_response_carries_labels(client, async_test_session, monk
     assert item["floor_name"] == "Этаж 1"
     assert item["contractor_name"] == "ООО Стройтест"
     assert item["work_name"]
+
+
+async def test_daily_plan_says_when_the_day_closes(client):
+    open_day = await client.get(
+        f"{API}/plan-naryad/daily", params={"target_date": OPEN_DAY, "housing_id": HOUSING_1_ID}
+    )
+    closed_day = await client.get(
+        f"{API}/plan-naryad/daily", params={"target_date": "2026-01-20", "housing_id": HOUSING_1_ID}
+    )
+
+    assert open_day.json()["data"]["is_closed"] is False
+    assert open_day.json()["data"]["transfer_time"] == "10:00:00"
+    assert closed_day.json()["data"]["is_closed"] is True
+
+
+async def test_closed_day_is_refused_with_400_before_the_regenerate_prompt(client):
+    """The 409 «сформировать заново?» prompt must not be offered for a day that is gone."""
+    payload = {"date": "2026-01-20", "housing_id": HOUSING_1_ID, "section_id": SECTION_1_ID}
+
+    generate = await client.post(f"{API}/plan-naryad/generate", json=payload)
+    create = await client.post(f"{API}/plan-naryad/", json={**payload, **_MANUAL_ITEM})
+
+    assert generate.status_code == 400
+    assert "Время передачи заданий подрядчику на 20.01.2026" in generate.json()["message"]
+    assert create.status_code == 400
+    assert "Время передачи заданий подрядчику на 20.01.2026" in create.json()["message"]

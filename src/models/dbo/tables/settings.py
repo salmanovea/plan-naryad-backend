@@ -1,11 +1,11 @@
 """Operational settings and the action journal."""
 
-from datetime import datetime
+from datetime import datetime, time
 from enum import Enum
 from typing import TYPE_CHECKING, Optional
 from uuid import UUID
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Index, Integer, String, Uuid, func
+from sqlalchemy import JSON, DateTime, ForeignKey, Index, Integer, String, Time, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.dbo.mixins import IDMixin
@@ -30,6 +30,24 @@ class ContractorPositionLimit(IDMixin, Base):
     contractor: Mapped["Contractor"] = relationship()  # type: ignore[name-defined]
 
     __table_args__ = (Index("uq_contractor_position_limits_contractor", "contractor_id", unique=True),)
+
+
+DEFAULT_TRANSFER_TIME = time(10, 0)
+NIGHTLY_PLAN_TIME = time(3, 0)
+
+
+class PlanSettings(IDMixin, Base):
+    """System-wide plan-naryad settings: a single row, edited in the admin.
+
+    `transfer_time` is when a day's positions go to the contractors, on that same day in
+    business time. From then on the day is closed — no generation, no new positions, no
+    confirming or deleting. It has to stay after `NIGHTLY_PLAN_TIME` (Raport's 03:00 job):
+    the night run builds today's plan only while today is still open.
+    """
+
+    __tablename__ = "plan_settings"
+
+    transfer_time: Mapped[time] = mapped_column(Time, nullable=False, default=DEFAULT_TRANSFER_TIME)
 
 
 class ActionType(str, Enum):

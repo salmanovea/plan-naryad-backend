@@ -8,7 +8,12 @@ from src.config.admin.model_admin.action_log import ActionLogAdmin
 from src.config.admin.model_admin.alert import AlertAdmin
 from src.config.admin.model_admin.contractor import ContractAdmin, ContractorAdmin
 from src.config.admin.model_admin.fact import WorkFactAdmin
-from src.config.admin.model_admin.plan import ContractorPositionLimitAdmin, PlanItemAdmin, TechSequenceItemAdmin
+from src.config.admin.model_admin.plan import (
+    ContractorPositionLimitAdmin,
+    PlanItemAdmin,
+    PlanSettingsAdmin,
+    TechSequenceItemAdmin,
+)
 from src.config.admin.model_admin.reconciliation import DailySummaryAdmin, ReconciliationResultAdmin
 from src.config.admin.model_admin.housing import FloorAdmin, HousingAdmin, SectionAdmin
 from src.config.admin.model_admin.project_structure import (
@@ -69,6 +74,7 @@ def init_admin(app: FastAPI) -> Admin:
     admin.add_view(PlanItemAdmin)
     admin.add_view(TechSequenceItemAdmin)
     admin.add_view(ContractorPositionLimitAdmin)
+    admin.add_view(PlanSettingsAdmin)
 
     # Facts & reconciliation
     admin.add_view(WorkFactAdmin)

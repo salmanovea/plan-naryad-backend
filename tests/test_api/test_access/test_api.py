@@ -225,7 +225,8 @@ async def test_rs_can_confirm_and_delete_own_position(role_client, access_data):
     own = access_data.plans[0][0].id
     response = await client.post(f"{API}/plan-naryad/{own}/confirm", json={})
     assert response.status_code == 200, response.text
-    assert response.json()["data"]["status"] == "confirmed"
+    assert response.json()["data"]["status"] == "draft"
+    assert response.json()["data"]["rs_confirmed"] is True
     assert (await client.delete(f"{API}/plan-naryad/{own}")).status_code == 200
 
 

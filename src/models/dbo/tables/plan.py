@@ -25,10 +25,14 @@ class PlanSource(str, Enum):
 
 
 class PlanStatus(str, Enum):
-    """`CANCELLED` is retired — items are deleted outright."""
+    """Draft until the transfer time, then handed to the contractor.
+
+    Confirmation is not a status: it is the `rs_confirmed` mark on a draft, and the transfer
+    takes drafts whether they carry it or not. `CANCELLED` is retired — items are deleted
+    outright.
+    """
 
     DRAFT = "draft"
-    CONFIRMED = "confirmed"
     TRANSFERRED = "transferred"
     CANCELLED = "cancelled_by_rs"
 

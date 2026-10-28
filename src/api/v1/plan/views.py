@@ -26,7 +26,7 @@ from src.api.v1.plan.schemes import (
     PlanItemSchema,
 )
 from src.services.common import current_actor
-from src.services.plan.service import AutogenerationService, default_target_date, get_plan_service
+from src.services.plan.service import AutogenerationService, get_plan_service
 from src.utils.helpers import catch_all_exceptions, get_responses, pagination_params
 
 plan_router = APIRouter(prefix="/plan-naryad", tags=["Plan Naryad"], dependencies=[Depends(plan_access)])
@@ -77,6 +77,7 @@ async def get_daily_plan(
         search_kwargs["section_id"] = section_id
     items = await service.get_plan_items(**search_kwargs)
     housing = await service.get_housing(housing_id)
+    lock = await service.day_lock(target_date)
     return DataResponseSchema[DailyPlanResponse](
         data=DailyPlanResponse(
             date=target_date,
@@ -84,6 +85,8 @@ async def get_daily_plan(
             housing_name=housing.name if housing else None,
             total_items=len(items),
             items=items,
+            transfer_time=lock.transfer_time,
+            is_closed=lock.closed,
         )
     )
 
@@ -121,7 +124,8 @@ async def generate_plan(
     service: AutogenerationService = Depends(get_plan_service),
     actor: str = Depends(current_actor),
 ) -> DataResponseSchema[GeneratePlanResponse]:
-    target_date = body.date or default_target_date()
+    target_date = body.date or await service.target_date()
+    await service.require_open_day(target_date)
 
     if not body.force and await service.has_plan_for(body.housing_id, target_date, body.section_id):
         raise HTTPException(
@@ -207,10 +211,10 @@ async def transfer_plan(
     body: TransferPlanRequest,
     service: AutogenerationService = Depends(get_plan_service),
 ) -> DataResponseSchema[dict]:
-    """Hand the day's positions to the contractors.
+    """Hand one day's drafts to the contractors now, confirmed or not, whatever the time.
 
-    After the cutoff every position that was not deleted goes over, confirmed or not — the
-    spec is explicit about that. Called by the scheduler; exposed for debugging too.
+    An operator's and debugging tool: the scheduled hand-over is `POST /tasks/transfer`,
+    which goes by the transfer time from the admin settings.
     """
     result = await service.transfer_day(body.date, housing_id=body.housing_id, section_id=body.section_id)
     return DataResponseSchema[dict](data=result)

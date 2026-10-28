@@ -22,7 +22,7 @@ FLOOR_1 = UUID("55555555-5555-5555-5555-555555555555")
 WORK_A = UUID("88888888-8888-8888-8888-888888888888")
 CONTRACTOR = UUID("99999999-9999-9999-9999-999999999999")
 
-DAY = date(2026, 10, 5)
+DAY = date(2030, 10, 5)
 
 
 async def _sequence(session) -> None:
@@ -245,11 +245,36 @@ async def test_empty_reasons_surface_when_nothing_was_generated(async_test_sessi
     assert result["housings_detail"][0]["reasons"] == ["Не назначен подрядчик для работы X"]
 
 
-async def test_transfer_job_defaults_to_today(async_test_session):
+async def test_transfer_job_without_a_date_sweeps_the_closed_days(async_test_session):
+    """The scheduled call carries no date: every day past its transfer time goes, later ones wait."""
+    plans = managers.PlanItemManager(async_test_session)
+    past = date(2026, 1, 15)
+    for day in (past, DAY):
+        for item in await plans.search(housing_id=HOUSING, date=day):
+            await plans.delete_by_id(item.id)
+        await plans.create(
+            {
+                "date": day,
+                "housing_id": HOUSING,
+                "section_id": SECTION_1,
+                "floor_id": FLOOR_1,
+                "work_id": WORK_A,
+                "contractor_id": CONTRACTOR,
+                "source": "auto",
+                "status": PlanStatus.DRAFT.value,
+            }
+        )
+
     result = await TaskService(async_test_session).run_transfer()
 
-    assert result["date"] == date.today()
-    assert "transferred" in result
+    assert result["transferred"] >= 1
+    assert past in result["dates"]
+    assert DAY not in result["dates"]
+    assert [i.status for i in await plans.search(housing_id=HOUSING, date=past)] == [PlanStatus.TRANSFERRED]
+    assert [i.status for i in await plans.search(housing_id=HOUSING, date=DAY)] == [PlanStatus.DRAFT]
+    for day in (past, DAY):
+        for item in await plans.search(housing_id=HOUSING, date=day):
+            await plans.delete_by_id(item.id)
 
 
 async def test_transfer_job_moves_the_day(async_test_session):

@@ -4,7 +4,7 @@ Raport-backed collaborators are stubbed — these tests are about the rules the 
 not about response shapes (those live in tests/test_services/test_report_cells/).
 """
 
-from datetime import date
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
@@ -15,8 +15,9 @@ from src.models import managers
 from src.models.dbo.tables.plan import PlanStatus
 from src.models.dbo.tables.settings import ActionType
 from src.services.contractor_works import AssignmentKey, HousingAssignments
-from src.services.plan.service import AutogenerationService
+from src.services.plan.service import TRANSFERRED_LOCK_MESSAGE, AutogenerationService
 from src.services.report_cells import CellKey, CellState, HousingSlice
+from src.utils.exceptions import PlanLocked
 
 HOUSING = UUID("11111111-1111-1111-1111-111111111111")
 SECTION_1 = UUID("33333333-3333-3333-3333-333333333333")
@@ -28,7 +29,9 @@ WORK_TYPE = UUID("77777777-7777-7777-7777-777777777777")
 CONTRACTOR = UUID("99999999-9999-9999-9999-999999999999")
 CONTRACTOR_2 = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
 
-TARGET = date(2026, 6, 10)
+TARGET = date(2030, 6, 10)
+# Any day before today is past its transfer time, whatever the setting.
+CLOSED_DAY = date(2026, 1, 20)
 
 
 def _service(
@@ -55,8 +58,42 @@ def _service(
 
 async def _clear(session) -> None:
     plans = managers.PlanItemManager(session)
-    for item in await plans.search(housing_id=HOUSING, date=TARGET):
-        await plans.delete_by_id(item.id)
+    for day in (TARGET, CLOSED_DAY, TARGET - timedelta(days=1), TARGET + timedelta(days=1)):
+        for item in await plans.search(housing_id=HOUSING, date=day):
+            await plans.delete_by_id(item.id)
+
+
+async def _draft(session, day: date, floor_id: UUID = FLOOR_1, **extra) -> UUID:
+    """A draft written straight to the table — the service would refuse a closed day."""
+    item = await managers.PlanItemManager(session).create(
+        {
+            "date": day,
+            "housing_id": HOUSING,
+            "section_id": SECTION_1,
+            "floor_id": floor_id,
+            "work_id": WORK_A,
+            "contractor_id": CONTRACTOR,
+            "source": "manual",
+            "status": PlanStatus.DRAFT.value,
+            **extra,
+        }
+    )
+    return item.id
+
+
+@pytest.fixture
+async def transfer_at(async_test_session):
+    """Set the admin transfer time for one test; the row is removed afterwards."""
+    settings = managers.PlanSettingsManager(async_test_session)
+
+    async def _set(value: time) -> None:
+        for row in await settings.search():
+            await settings.delete_by_id(row.id)
+        await settings.create({"transfer_time": value})
+
+    yield _set
+    for row in await settings.search():
+        await settings.delete_by_id(row.id)
 
 
 @pytest.mark.smoke
@@ -119,15 +156,34 @@ async def test_manual_add_works_without_a_known_cell(async_test_session):
     assert item.source_percent is None
 
 
-async def test_confirm_moves_draft_to_confirmed(async_test_session):
+async def test_confirm_marks_the_draft_and_keeps_its_status(async_test_session):
+    """Confirmation is a mark on a draft, not a status of its own."""
     await _clear(async_test_session)
     service = _service(async_test_session)
     item, _ = await service.add_manual_item(HOUSING, SECTION_1, FLOOR_1, WORK_A, CONTRACTOR, TARGET)
 
     confirmed = await service.confirm_item(item.id)
 
-    assert confirmed.status == PlanStatus.CONFIRMED
+    assert confirmed.status == PlanStatus.DRAFT
     assert confirmed.rs_confirmed is True
+    assert confirmed.rs_confirmed_at is not None
+
+
+async def test_confirming_twice_keeps_the_first_mark(async_test_session):
+    await _clear(async_test_session)
+    logs = managers.ActionLogManager(async_test_session)
+    service = _service(async_test_session)
+    item, _ = await service.add_manual_item(HOUSING, SECTION_1, FLOOR_1, WORK_A, CONTRACTOR, TARGET)
+    first = await service.confirm_item(item.id)
+    stamped_at = first.rs_confirmed_at
+
+    again = await service.confirm_item(item.id)
+    bulk = await service.confirm_items([item.id])
+
+    assert again.rs_confirmed_at == stamped_at
+    assert bulk["confirmed"] == 0
+    confirms = [r for r in await logs.search(entity_id=item.id) if r.action == ActionType.PLAN_ITEM_CONFIRM.value]
+    assert len(confirms) == 1
 
 
 async def test_delete_removes_the_position(async_test_session):
@@ -140,7 +196,7 @@ async def test_delete_removes_the_position(async_test_session):
 
 
 async def test_transfer_moves_draft_and_confirmed_alike(async_test_session):
-    """Spec: after the cutoff everything not deleted goes over, confirmed or not."""
+    """Spec: at the transfer time everything not deleted goes over, confirmed or not."""
     await _clear(async_test_session)
     service = _service(async_test_session)
     draft, _ = await service.add_manual_item(HOUSING, SECTION_1, FLOOR_1, WORK_A, CONTRACTOR, TARGET)
@@ -328,7 +384,8 @@ async def test_bulk_confirm_handles_the_whole_selection(async_test_session):
     # An id that does not exist is reported, not silently dropped.
     assert result["not_found"] == [str(missing)]
     items = await service.plan_item_manager.search(housing_id=HOUSING, date=TARGET)
-    assert {i.status for i in items} == {PlanStatus.CONFIRMED}
+    assert {i.status for i in items} == {PlanStatus.DRAFT}
+    assert all(i.rs_confirmed for i in items)
 
 
 async def test_bulk_delete_removes_the_selection(async_test_session):
@@ -357,6 +414,141 @@ async def test_bulk_operations_are_journalled_per_item(async_test_session):
 
     confirms = [r for r in await logs.search() if r.action == ActionType.PLAN_ITEM_CONFIRM.value]
     assert {r.entity_id for r in confirms} == {first.id, second.id}
+
+
+async def test_day_plan_keeps_its_order_after_a_confirmation(async_test_session):
+    """Rows come section → floor → work, not in storage order an update would shuffle."""
+    await _clear(async_test_session)
+    service = _service(async_test_session)
+    upper, _ = await service.add_manual_item(HOUSING, SECTION_1, FLOOR_2, WORK_A, CONTRACTOR, TARGET)
+    lower, _ = await service.add_manual_item(HOUSING, SECTION_1, FLOOR_1, WORK_A, CONTRACTOR, TARGET)
+    before = [i.id for i in await service.get_plan_items(housing_id=HOUSING, date=TARGET)]
+
+    await service.confirm_item(before[0])
+    after = await service.get_plan_items(housing_id=HOUSING, date=TARGET)
+
+    assert [i.id for i in after] == before
+    assert [i.floor_number for i in after] == sorted(i.floor_number for i in after)
+    assert {upper.id, lower.id} == set(before)
+
+
+# ── Transferred positions and the transfer time ─────────────────────────────
+
+
+async def test_transferred_position_cannot_be_confirmed_or_deleted(async_test_session):
+    """It belongs to the contractor now: neither one by one nor in a selection."""
+    await _clear(async_test_session)
+    service = _service(async_test_session)
+    item, _ = await service.add_manual_item(HOUSING, SECTION_1, FLOOR_1, WORK_A, CONTRACTOR, TARGET)
+    draft, _ = await service.add_manual_item(HOUSING, SECTION_1, FLOOR_2, WORK_A, CONTRACTOR, TARGET)
+    await service.plan_item_manager.update_by_id(item.id, {"status": PlanStatus.TRANSFERRED.value})
+
+    for attempt in (
+        service.confirm_item(item.id),
+        service.delete_item(item.id),
+        service.confirm_items([draft.id, item.id]),
+        service.delete_items([draft.id, item.id]),
+    ):
+        with pytest.raises(PlanLocked, match=TRANSFERRED_LOCK_MESSAGE):
+            await attempt
+
+    rows = {i.id: i for i in await service.plan_item_manager.search(housing_id=HOUSING, date=TARGET)}
+    assert rows[item.id].status == PlanStatus.TRANSFERRED
+    assert rows[item.id].rs_confirmed is False
+    # The selection is all or nothing: the draft beside it is untouched too.
+    assert rows[draft.id].rs_confirmed is False
+
+
+async def test_regeneration_does_not_overwrite_transferred_positions(async_test_session):
+    await _clear(async_test_session)
+    service = _service(async_test_session)
+    item, _ = await service.add_manual_item(HOUSING, SECTION_1, FLOOR_1, WORK_A, CONTRACTOR, TARGET)
+    await service.plan_item_manager.update_by_id(item.id, {"status": PlanStatus.TRANSFERRED.value})
+
+    with pytest.raises(PlanLocked, match=TRANSFERRED_LOCK_MESSAGE):
+        await service.generate_daily_plan(HOUSING, TARGET, force=True)
+
+    assert [i.id for i in await service.plan_item_manager.search(housing_id=HOUSING, date=TARGET)] == [item.id]
+
+
+async def test_closed_day_refuses_every_change(async_test_session):
+    """Past the transfer time the day has gone out: no add, confirm, delete or generation."""
+    await _clear(async_test_session)
+    service = _service(async_test_session)
+    draft = await _draft(async_test_session, CLOSED_DAY)
+
+    item, error = await service.add_manual_item(HOUSING, SECTION_1, FLOOR_2, WORK_A, CONTRACTOR, CLOSED_DAY)
+    assert item is None
+    assert error is not None
+    assert "Время передачи заданий подрядчику на 20.01.2026 (10:00) прошло" in error
+
+    for attempt in (
+        service.confirm_item(draft),
+        service.delete_item(draft),
+        service.confirm_items([draft]),
+        service.delete_items([draft]),
+        service.generate_daily_plan(HOUSING, CLOSED_DAY, force=True),
+        service.require_open_day(CLOSED_DAY),
+    ):
+        with pytest.raises(PlanLocked, match="20.01.2026"):
+            await attempt
+
+    rows = await service.plan_item_manager.search(housing_id=HOUSING, date=CLOSED_DAY)
+    assert [(r.id, r.rs_confirmed) for r in rows] == [(draft, False)]
+
+
+async def test_a_day_closes_at_its_transfer_time_to_the_minute(async_test_session, transfer_at, monkeypatch):
+    await transfer_at(time(10, 30))
+    service = AutogenerationService(async_test_session)
+
+    monkeypatch.setattr("src.services.plan.service.business_now", lambda: datetime(2030, 6, 10, 10, 29))
+    before = await service.day_lock(TARGET)
+    monkeypatch.setattr("src.services.plan.service.business_now", lambda: datetime(2030, 6, 10, 10, 30))
+    at = await service.day_lock(TARGET)
+    tomorrow = await service.day_lock(TARGET + timedelta(days=1))
+
+    assert before.closed is False
+    assert before.transfer_time == time(10, 30)
+    assert at.closed is True
+    assert tomorrow.closed is False
+
+
+async def test_transfer_time_defaults_to_ten_without_a_settings_row(async_test_session, transfer_at):
+    settings = managers.PlanSettingsManager(async_test_session)
+    for row in await settings.search():
+        await settings.delete_by_id(row.id)
+
+    assert await settings.get_transfer_time() == time(10, 0)
+
+
+async def test_transfer_due_sweeps_every_closed_day_and_leaves_open_ones(async_test_session, transfer_at):
+    """A missed run is caught up by the next one; drafts go over confirmed or not."""
+    await _clear(async_test_session)
+    await transfer_at(time(10, 30))
+    service = AutogenerationService(async_test_session)
+    yesterday = await _draft(async_test_session, TARGET - timedelta(days=1), rs_confirmed=True)
+    today = await _draft(async_test_session, TARGET)
+    tomorrow = await _draft(async_test_session, TARGET + timedelta(days=1))
+
+    early = await service.transfer_due(now=datetime(2030, 6, 10, 10, 29))
+    late = await service.transfer_due(now=datetime(2030, 6, 10, 10, 30))
+    again = await service.transfer_due(now=datetime(2030, 6, 10, 10, 40))
+
+    assert early["until"] == TARGET - timedelta(days=1)
+    assert TARGET - timedelta(days=1) in early["dates"]
+    assert late["until"] == TARGET
+    assert TARGET in late["dates"]
+    assert TARGET not in again["dates"]
+    statuses = {
+        i.id: i.status
+        for day in (TARGET - timedelta(days=1), TARGET, TARGET + timedelta(days=1))
+        for i in await service.plan_item_manager.search(housing_id=HOUSING, date=day)
+    }
+    assert statuses == {
+        yesterday: PlanStatus.TRANSFERRED,
+        today: PlanStatus.TRANSFERRED,
+        tomorrow: PlanStatus.DRAFT,
+    }
 
 
 class TestFloorLabels:

@@ -1,4 +1,4 @@
-"""Bodies of the scheduled work: facts first, then the plan; hand-over at the cutoff.
+"""Bodies of the scheduled work: facts first, then the plan; hand-over at the transfer time.
 
 The endpoints in `src/api/v1/task/views.py` are thin wrappers over this service — Raport's
 taskiq hits them on its schedule. Any future caller without HTTP around it (an own scheduler,
@@ -23,9 +23,8 @@ from src.config.logger import LoggerProvider
 from src.config.postgres.db_config import get_session
 from src.models import managers
 from src.services.common import BaseService
-from src.services.plan.service import AutogenerationService, default_target_date
+from src.services.plan.service import AutogenerationService
 from src.services.sync.service import SyncReportService
-from src.utils.business_time import business_today
 
 log = LoggerProvider().get_logger(__name__)
 
@@ -78,9 +77,9 @@ class TaskService(BaseService):
         """Facts first, then the day's plan, for one housing or all of them.
 
         `target_date` defaults to the rule from Р3 — today for a night run, tomorrow once the
-        cutoff has passed.
+        transfer time has passed.
         """
-        target = target_date or default_target_date()
+        target = target_date or await AutogenerationService(self.db).target_date()
         yesterday = target - timedelta(days=1)
 
         if housing_raport_id:
@@ -122,11 +121,19 @@ class TaskService(BaseService):
         return {"date": target, **totals, "housings_detail": per_housing}
 
     async def run_transfer(self, target_date: Optional[date] = None) -> dict:
-        """Hand the day's positions over. Defaults to today — the cutoff job wants no arguments."""
-        day = target_date or business_today()
-        result = await AutogenerationService(self.db).transfer_day(day)
-        log.info("transfer: %s for %s", result, day)
-        return {"date": day, **result}
+        """Hand positions over to the contractors.
+
+        Without a date — the scheduled call, every few minutes — every closed day's drafts go
+        (`transfer_due`). A date hands that one day over at once, for an operator.
+        """
+        service = AutogenerationService(self.db)
+        if target_date:
+            result = await service.transfer_day(target_date)
+            log.info("transfer: %s for %s", result, target_date)
+            return {"date": target_date, **result}
+        result = await service.transfer_due()
+        log.info("transfer: %s", result)
+        return result
 
 
 async def get_task_service(db: AsyncSession = Depends(get_session)) -> TaskService:

@@ -33,10 +33,7 @@ class AppConfig(BaseSettings):
     # `contractor_position_limits` holds no row for them (decision Р8; the ТЗ
     # limit is per contractor). The env name keeps its historical spelling.
     default_floor_limit: int = 4
-    # Until this hour (business time, see app_timezone) an unscheduled generation targets
-    # today; later it targets tomorrow — today's plan has already gone out (Р3).
-    plan_transfer_cutoff_hour: int = 10
-    # The business timezone: fact dates and the cutoff hour are computed in it regardless
+    # The business timezone: fact dates and the transfer time are computed in it regardless
     # of the container's TZ.
     app_timezone: str = "Europe/Moscow"
 

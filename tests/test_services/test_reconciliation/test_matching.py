@@ -39,9 +39,7 @@ async def _wipe(session) -> None:
     for manager in (managers.ReconciliationResultManager(session), managers.DailySummaryManager(session)):
         await manager.bulk_delete([r.id for r in await manager.search(housing_id=HOUSING)])
     plans = managers.PlanItemManager(session)
-    await plans.bulk_delete(
-        [p.id for p in await plans.search(housing_id=HOUSING, date__gte=START, date__lte=SPAN_END)]
-    )
+    await plans.bulk_delete([p.id for p in await plans.search(housing_id=HOUSING, date__gte=START, date__lte=SPAN_END)])
     facts = managers.WorkFactManager(session)
     await facts.bulk_delete(
         [f.id for f in await facts.search(housing_id=HOUSING, work_date__gte=START, work_date__lte=SPAN_END)]
@@ -369,9 +367,7 @@ async def test_contractor_summary_counts_the_four_indicators(async_test_session)
 async def test_contractor_summary_agrees_with_the_results_table(async_test_session):
     await _seed_summary_day(async_test_session)
 
-    summary = await _service(async_test_session).contractor_summary(
-        housing_id=HOUSING, date_from=START, date_to=START
-    )
+    summary = await _service(async_test_session).contractor_summary(housing_id=HOUSING, date_from=START, date_to=START)
 
     rows = await _rows(async_test_session, START)
     unplanned = sum(r.status == ReconciliationStatus.UNPLANNED for r in rows)

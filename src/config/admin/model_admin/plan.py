@@ -1,7 +1,11 @@
+from typing import Any
+
+from starlette.requests import Request
+
 from src.config.admin.categories import CATEGORY_PLAN
 from src.config.admin.model_admin.base_admin import BaseAdmin
 from src.models.dbo.tables.plan import PlanItem
-from src.models.dbo.tables.settings import ContractorPositionLimit
+from src.models.dbo.tables.settings import NIGHTLY_PLAN_TIME, ContractorPositionLimit, PlanSettings
 from src.models.dbo.tables.work import TechSequenceItem
 
 
@@ -137,3 +141,29 @@ class ContractorPositionLimitAdmin(BaseAdmin, model=ContractorPositionLimit):  #
         "contractor.name",
     ]
     column_sortable_list = [ContractorPositionLimit.positions_limit]
+
+
+class PlanSettingsAdmin(BaseAdmin, model=PlanSettings):  # type: ignore[call-arg]
+    """The single settings row: created by the migration, only ever edited."""
+
+    category = CATEGORY_PLAN
+    name = "Настройки план-наряда"
+    name_plural = "Настройки план-наряда"
+    icon = "fa-solid fa-clock"
+
+    can_create = False
+    can_delete = False
+
+    column_list = [PlanSettings.transfer_time]
+    column_details_list = [PlanSettings.transfer_time]
+    form_columns = [PlanSettings.transfer_time]
+    column_labels = {PlanSettings.transfer_time: "Время передачи заданий подрядчику (МСК)"}
+
+    async def on_model_change(self, data: dict, model: Any, is_created: bool, request: Request) -> None:
+        """The nightly job builds today's plan only while today is open, so the transfer has to follow it."""
+        transfer_time = data.get("transfer_time")
+        if transfer_time is not None and transfer_time <= NIGHTLY_PLAN_TIME:
+            raise ValueError(
+                f"Время передачи должно быть позже {NIGHTLY_PLAN_TIME:%H:%M} — "
+                "в это время ночная генерация строит план-наряд на текущий день."
+            )
