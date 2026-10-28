@@ -274,8 +274,8 @@ class ReportApi:
 
         Since the Raport change of 17 Aug 2026 each row carries `percent` — the payload that
         actually matters, because 99.2% of facts have `volume = 0` — plus `contractor` and
-        `work_cell_contractor_id`. Those two come from `work_cell_contractor` and are empty
-        on most rows, so the contractor is resolved locally from the cell's assignment.
+        `work_cell_contractor_id`. Both come from `work_cell_contractor`, mandatory on new facts
+        since DEV-6485 (15 Sep 2026); only older facts lack them.
         """
         return await self._request("GET", "/api/v1/work-facts", params=params)
 

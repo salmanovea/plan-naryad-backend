@@ -509,10 +509,11 @@ class SyncReportService(BaseService):
         Facts are entered in Raport only (spec: creating them here is out of scope), so this
         is a one-way mirror keyed by `raport_id` (Raport's `work_fact.id`).
 
-        Raport leaves `contractor` empty on virtually every fact — 0 of 56 365 on the
-        reference housing — so the contractor is resolved from the cell's assignment
-        (`/contractor-works`), which covers 99.5% of cells. Facts on a cell shared by several
-        contractors are stored without one rather than attributed by guesswork.
+        The contractor is the one of the fact's `work_cell_contractor`, which Raport returns as
+        `contractor`. Since DEV-6485 (15 Sep 2026) Raport refuses a fact without a
+        `work_cell_contractor`, so only older facts fall back to the cell's assignment
+        (`/contractor-works`) — and only when the cell has a single contractor. The rest are
+        stored without one rather than attributed by guesswork.
 
         Without a window the default is yesterday and today, which is what the nightly run
         needs; a full re-pull is done by passing an explicit range.
@@ -534,8 +535,15 @@ class SyncReportService(BaseService):
         section_map = await self._reverse_raport_map(self.section_manager, housing_id=housing_id)
         floor_map = await self._floor_raport_map(housing_id)
         work_map = await self._resolve_parents(self.work_manager, (_nested_id(r, "work", "id") or "" for r in rows_src))
+        contractor_map = await self._resolve_parents(
+            self.contractor_manager, (_nested_id(r, "contractor", "id") or "" for r in rows_src)
+        )
 
-        assignments = await ContractorWorksService(self.db, report=self.report).get_housing_assignments(housing_id)
+        assignments = (
+            await ContractorWorksService(self.db, report=self.report).get_housing_assignments(housing_id)
+            if any(not _nested_id(r, "contractor", "id") for r in rows_src)
+            else HousingAssignments()
+        )
 
         rows: list[dict] = []
         skipped = 0
@@ -548,7 +556,9 @@ class SyncReportService(BaseService):
                 skipped += 1
                 continue
 
-            contractor_id = await self._resolve_fact_contractor(src, section_id, floor_id, work_id, assignments)
+            contractor_id = self._resolve_fact_contractor(
+                src, contractor_map, assignments, section_id=section_id, floor_id=floor_id, work_id=work_id
+            )
             if contractor_id is None:
                 without_contractor += 1
 
@@ -629,19 +639,24 @@ class SyncReportService(BaseService):
         return rows
 
     @staticmethod
-    async def _resolve_fact_contractor(
+    def _resolve_fact_contractor(
         src: dict,
+        contractor_map: dict[str, UUID],
+        assignments: HousingAssignments,
+        *,
         section_id: UUID,
         floor_id: UUID,
         work_id: UUID,
-        assignments: "HousingAssignments",
     ) -> UUID | None:
-        """Raport's own contractor first, the cell's sole assignee second, else nothing."""
+        """The contractor of the fact's `work_cell_contractor`, else the cell's sole assignee, else nothing.
+
+        A contractor Raport names but we have not synced yields nothing: the cell's assignee
+        may be someone else, and a fact credited to the wrong contractor breaks the
+        plan/fact match in reconciliation.
+        """
         raport_contractor = _nested_id(src, "contractor", "id")
         if raport_contractor:
-            # Raport named the contractor itself; trust it when it resolves locally.
-            for candidate in assignments.contractors_for(section_id, floor_id, work_id):
-                return candidate
+            return contractor_map.get(raport_contractor)
         return assignments.single_contractor_for(section_id, floor_id, work_id)
 
     async def _reverse_raport_map(self, manager: BaseManager, **filters: Any) -> dict[str, UUID]:

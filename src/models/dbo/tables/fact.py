@@ -56,11 +56,11 @@ class WorkFact(IDMixin, RaportMixin, Base):
         nullable=False,
         index=True,
     )
-    # Nullable on purpose. Raport leaves `contractor` and `work_cell_contractor_id` empty on
-    # essentially every fact (0 of 56 365 on the reference housing), so the contractor is
-    # derived from the cell's assignment. That works for 99.5% of cells; the rest have more
-    # than one contractor and cannot be attributed — but the fact still happened and must be
-    # stored, otherwise reconciliation loses «факт без плана» rows.
+    # The contractor of the fact's `work_cell_contractor`. Nullable on purpose: facts entered
+    # before Raport made `work_cell_contractor` mandatory (DEV-6485, 15 Sep 2026) carry none
+    # and fall back to the cell's assignment, which fails on cells with several contractors —
+    # but the fact still happened and must be stored, otherwise reconciliation loses
+    # «факт без плана» rows.
     contractor_id: Mapped[Optional[UUID]] = mapped_column(
         ForeignKey("contractors.id", name="fk_work_facts_contractor_id"),
         index=True,

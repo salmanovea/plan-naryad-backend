@@ -77,7 +77,7 @@ async def test_fact_response_hides_volume_but_shows_percent(client, async_test_s
 
 
 async def test_fact_without_contractor_is_stored(client, async_test_session):
-    """Raport leaves the contractor empty on most facts; the row must survive anyway."""
+    """Facts older than DEV-6485 may have no attributable contractor; the row must survive anyway."""
     from src.models import managers
 
     fact = await managers.WorkFactManager(async_test_session).create(
