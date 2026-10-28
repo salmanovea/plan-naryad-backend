@@ -27,6 +27,8 @@ from src.external.report.auth import clear_token_cache, get_report_access_token
 
 log = LoggerProvider().get_logger(__name__)
 
+STABLE_ORDER = "id"
+
 
 class ReportApiError(RuntimeError):
     """Raised when the Raport API responds with a non-2xx status."""
@@ -87,8 +89,10 @@ class ReportApi:
         Stops when the envelope's `pagination.next_page` is null/absent (or a page
         comes back empty). The Raport pagination envelope uses
         `{total_items, page, items_per_page, next_page, prev_page, total_pages}`.
+        Pages are ordered by `STABLE_ORDER` unless the caller passes its own `order_by`.
         """
         method = getattr(self, method_name)
+        kwargs.setdefault("order_by", STABLE_ORDER)
         page, results = 1, []
         while True:
             resp = await method(page=page, per_page=self._PER_PAGE, **kwargs)

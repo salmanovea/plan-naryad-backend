@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 
-from src.external.report.api import ReportApi, ReportApiError
+from src.external.report.api import STABLE_ORDER, ReportApi, ReportApiError
 
 
 def _response(status_code: int, payload: dict | None = None) -> httpx.Response:
@@ -67,3 +67,28 @@ async def test_other_errors_are_not_retried(api):
             await api.list_projects()
 
     assert request.await_count == 1
+
+
+# ── Page walks ────────────────────────────────────────────────────────────────
+
+
+def _page(ids: list[str], next_page: int | None, total: int) -> dict:
+    return {"data": [{"id": i} for i in ids], "pagination": {"next_page": next_page, "total_items": total}}
+
+
+async def test_list_all_asks_for_a_stable_order(api):
+    """Without an ORDER BY, Raport's OFFSET pages may repeat some rows and skip others."""
+    api.list_contractors = AsyncMock(side_effect=[_page(["a", "b"], 2, 3), _page(["c"], None, 3)])
+
+    rows = await api.list_all("list_contractors")
+
+    assert [r["id"] for r in rows] == ["a", "b", "c"]
+    assert {c.kwargs["order_by"] for c in api.list_contractors.call_args_list} == {STABLE_ORDER}
+
+
+async def test_list_all_keeps_the_callers_order(api):
+    api.list_contractors = AsyncMock(return_value=_page(["a"], None, 1))
+
+    await api.list_all("list_contractors", order_by="-name")
+
+    assert api.list_contractors.call_args.kwargs["order_by"] == "-name"

@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config.logger import LoggerProvider
 from src.config.postgres.db_config import get_session
-from src.external.report.api import ReportApi
+from src.external.report.api import STABLE_ORDER, ReportApi
 from src.models import managers
 from src.services.access.service import AccessService
 from src.services.common import BaseService, end_transaction
@@ -175,7 +175,9 @@ class ContractorWorksService(BaseService):
         page = 1
         while True:
             try:
-                response = await self.report.list_contractor_works(page=page, per_page=self._PER_PAGE, **filters)
+                response = await self.report.list_contractor_works(
+                    page=page, per_page=self._PER_PAGE, order_by=STABLE_ORDER, **filters
+                )
             except Exception as err:
                 log.error("contractor_works: read failed on page %d (%s): %s", page, filters, err)
                 break

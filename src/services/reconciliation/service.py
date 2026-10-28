@@ -26,6 +26,8 @@ def _fraction(percent: Optional[Decimal]) -> Decimal:
 
 
 class ReconciliationService(BaseService):
+    _RESULT_BATCH_SIZE = 1000
+
     def __init__(self, db: AsyncSession):
         self.access = AccessService(db)
         self.plan_item_manager = managers.PlanItemManager(db)
@@ -393,9 +395,12 @@ class ReconciliationService(BaseService):
                 results_data = self._build_results(
                     day, hid, plans_by_day.get(day, []), facts_by_day.get(day, []), slice_
                 )
-                if results_data:
-                    await self.reconciliation_manager.bulk_insert(results_data, is_commit=True)
-                    total_results += len(results_data)
+                for start in range(0, len(results_data), self._RESULT_BATCH_SIZE):
+                    end = start + self._RESULT_BATCH_SIZE
+                    await self.reconciliation_manager.bulk_insert(
+                        results_data[start:end], is_commit=end >= len(results_data)
+                    )
+                total_results += len(results_data)
 
                 summary_data = self._build_summary_data(day, hid, results_data)
                 await self.daily_summary_manager.create(summary_data)

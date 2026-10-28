@@ -37,7 +37,7 @@ from src.api.v1.sync.schemes import (
 )
 from src.config.logger import LoggerProvider
 from src.config.postgres.db_config import get_session
-from src.external.report.api import ReportApi
+from src.external.report.api import STABLE_ORDER, ReportApi
 from src.models import managers
 from src.models.dbo.tables.work import DependencyType
 from src.models.managers.common import BaseManager
@@ -616,7 +616,7 @@ class SyncReportService(BaseService):
         date_to: date | None,
     ) -> list[dict]:
         """Walk every page of `/work-facts` for a housing and window."""
-        params: dict[str, Any] = {"housing_id": housing_raport_id}
+        params: dict[str, Any] = {"housing_id": housing_raport_id, "order_by": STABLE_ORDER}
         if date_from:
             params["work_date__gte"] = str(date_from)
         if date_to:
