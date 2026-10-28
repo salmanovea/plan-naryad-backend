@@ -11,6 +11,7 @@ from src.api.schemes import (
     ResponseGroup,
 )
 from src.api.v1.reconciliation.schemes import (
+    ContractorSummary,
     DailySummarySchema,
     ReconciliationFilterOptions,
     ReconciliationFilters,
@@ -143,6 +144,29 @@ async def list_daily_summaries(
         pagination=pagination,
         total=total,
     )
+
+
+@reconciliation_router.get("/contractor-summary", responses=get_responses(ResponseGroup.ALL_ERRORS))
+@catch_all_exceptions
+async def reconciliation_contractor_summary(
+    housing_id: UUID | None = Query(None, description="Housing the summary is scoped to"),
+    project_id: UUID | None = Query(None, description="Project, when no single housing is chosen"),
+    date_from: date | None = Query(None, description="Start of the period (inclusive)"),
+    date_to: date | None = Query(None, description="End of the period (inclusive)"),
+    contractor_id: UUID | None = Query(
+        None, description="«Подрядчик» selector; forced to own companies for external users"
+    ),
+    service: ReconciliationService = Depends(get_reconciliation_service),
+) -> DataResponseSchema[ContractorSummary]:
+    """«Сводка» tab: issued / reported / not reported / unplanned per contractor over the period."""
+    summary = await service.contractor_summary(
+        housing_id=housing_id,
+        project_id=project_id,
+        date_from=date_from,
+        date_to=date_to,
+        contractor_id=contractor_id,
+    )
+    return DataResponseSchema[ContractorSummary](data=ContractorSummary.model_validate(summary))
 
 
 @reconciliation_router.get("/summaries/{summary_id}", responses=get_responses(ResponseGroup.ALL_ERRORS))

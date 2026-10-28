@@ -365,7 +365,8 @@ class AutogenerationService(BaseService):
 
         The spec lets the user step outside the technological sequence here, so no readiness
         check — but the contractor must actually be assigned to this work on this floor,
-        otherwise the position would be undeliverable.
+        otherwise the position would be undeliverable. A day holds one position per
+        (contractor, section, floor, work): reconciliation pairs plan and fact on that key.
 
         Percent and Raport cell ids are filled from the chessboard when the cell is known;
         a work the user picked outside the plan may have no cell yet, which is not an error.
@@ -381,6 +382,20 @@ class AutogenerationService(BaseService):
             return None, "Этаж не найден в этой секции."
         if not work:
             return None, "Работа не найдена."
+
+        duplicate = await self.plan_item_manager.search(
+            date=target_date,
+            housing_id=housing_id,
+            section_id=section_id,
+            floor_id=floor_id,
+            work_id=work_id,
+            contractor_id=contractor_id,
+        )
+        if duplicate:
+            return None, (
+                f"Позиция уже есть в план-наряде на {target_date:%d.%m.%Y}: работа {work.name} "
+                f"секция {section.name} этаж {floor_label(floor)}."
+            )
 
         allowed = await self.contractor_works.get_contractors_for_cell(work_id=work_id, floor_id=floor_id)
         if contractor_id not in allowed:

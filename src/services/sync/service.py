@@ -517,10 +517,14 @@ class SyncReportService(BaseService):
 
         Without a window the default is yesterday and today, which is what the nightly run
         needs; a full re-pull is done by passing an explicit range.
+
+        A fact deleted in Raport disappears from the mirror too, but only after Raport was read
+        to the last page: a partial answer would make every fact on the unread pages look deleted.
         """
+        empty = {"work_facts": 0, "skipped": 0, "without_contractor": 0, "removed": 0, "complete": True}
         local = await self.housing_manager.search(raport_id=housing_raport_id)
         if not local:
-            return {"work_facts": 0, "skipped": 0, "without_contractor": 0}
+            return empty
         housing_id = local[0].id
 
         if date_from is None and date_to is None:
@@ -528,9 +532,15 @@ class SyncReportService(BaseService):
             date_from = date_to - timedelta(days=1)
 
         await end_transaction(self.db)
-        rows_src = await self._fetch_work_facts(housing_raport_id, date_from, date_to)
+        rows_src, complete = await self._fetch_work_facts(housing_raport_id, date_from, date_to)
+        removed = 0
+        if complete:
+            removed = await self._remove_vanished_facts(
+                housing_id, date_from, date_to, {str(src["id"]) for src in rows_src}
+            )
         if not rows_src:
-            return {"work_facts": 0, "skipped": 0, "without_contractor": 0}
+            await self.db.commit()
+            return {**empty, "removed": removed, "complete": complete}
 
         section_map = await self._reverse_raport_map(self.section_manager, housing_id=housing_id)
         floor_map = await self._floor_raport_map(housing_id)
@@ -604,23 +614,53 @@ class SyncReportService(BaseService):
                 ],
                 batch_size=self._FACT_BATCH_SIZE,
             )
+        else:
+            await self.db.commit()
 
-        result = {"work_facts": len(rows), "skipped": skipped, "without_contractor": without_contractor}
+        result = {
+            "work_facts": len(rows),
+            "skipped": skipped,
+            "without_contractor": without_contractor,
+            "removed": removed,
+            "complete": complete,
+        }
         log.info("sync_work_facts: housing %s (%s..%s) — %s", housing_raport_id, date_from, date_to, result)
         return result
+
+    async def _remove_vanished_facts(
+        self,
+        housing_id: UUID,
+        date_from: date | None,
+        date_to: date | None,
+        present_raport_ids: set[str],
+    ) -> int:
+        """Delete mirrored facts of the window that Raport no longer returns; the count removed.
+
+        Rows without a `raport_id` were not mirrored from Raport and are left alone.
+        """
+        stored = await self.work_fact_manager.search(
+            housing_id=housing_id, work_date__gte=date_from, work_date__lte=date_to
+        )
+        vanished = [f.id for f in stored if f.raport_id and f.raport_id not in present_raport_ids]
+        await self.work_fact_manager.bulk_delete(vanished)
+        return len(vanished)
 
     async def _fetch_work_facts(
         self,
         housing_raport_id: str,
         date_from: date | None,
         date_to: date | None,
-    ) -> list[dict]:
-        """Walk every page of `/work-facts` for a housing and window."""
+    ) -> tuple[list[dict], bool]:
+        """Walk every page of `/work-facts` for a housing and window; (rows, read to the end).
+
+        Raport compares `work_date` with the bound as a Moscow datetime, so the upper bound
+        is the last second of `date_to` — the whole day, not only its midnight.
+        """
         params: dict[str, Any] = {"housing_id": housing_raport_id, "order_by": STABLE_ORDER}
         if date_from:
             params["work_date__gte"] = str(date_from)
         if date_to:
-            params["work_date__lte"] = str(date_to)
+            params["work_date__lte"] = f"{date_to}T23:59:59"
 
         rows: list[dict] = []
         page = 1
@@ -629,14 +669,13 @@ class SyncReportService(BaseService):
                 response = await self.report.list_work_facts(page=page, per_page=self._FACT_PER_PAGE, **params)
             except Exception as err:
                 log.error("sync_work_facts: read failed on page %d: %s", page, err)
-                break
+                return rows, False
             items = (response or {}).get("data") or []
             rows.extend(items)
             next_page = ((response or {}).get("pagination") or {}).get("next_page")
             if not next_page or not items:
-                break
+                return rows, True
             page = next_page
-        return rows
 
     @staticmethod
     def _resolve_fact_contractor(

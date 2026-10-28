@@ -44,7 +44,6 @@ class ReconciliationResultSchema(IDMixinSchema):
     pattern: Optional[ReconciliationPattern] = None
     plan_item_id: Optional[UUID] = None
     work_fact_id: Optional[UUID] = None
-    fact_is_late: bool = False
     # enriched
     housing_name: Optional[str] = None
     section_name: Optional[str] = None
@@ -81,6 +80,33 @@ class ReconciliationRunResponse(BaseModel):
     housing_count: int
     total_results: int
     total_summaries: int
+    facts_synced: int = Field(0, description="Facts mirrored from Raport before reconciling")
+    facts_removed: int = Field(0, description="Mirrored facts dropped because Raport no longer has them")
+    facts_sync_failed: int = Field(0, description="Housings whose facts could not be read from Raport")
+
+
+class ContractorSummaryIndicators(BaseModel):
+    """The four «Сводка» indicators."""
+
+    issued: int = Field(0, description="Выдано заданий — positions handed to the contractor")
+    reported: int = Field(0, description="Есть отчётность по плану — issued positions with a fact in place")
+    not_reported: int = Field(0, description="Нет отчётности по плану — issued positions without a fact")
+    unplanned: int = Field(0, description="Внеплановые работы — facts outside the issued plan")
+
+
+class ContractorSummaryRow(ContractorSummaryIndicators):
+    """One contractor's indicators over the period; no contractor for unattributed facts."""
+
+    contractor_id: Optional[UUID] = None
+    contractor_name: Optional[str] = None
+
+
+class ContractorSummary(BaseModel):
+    """«Сводка» over a period: a row per contractor, their total, and the unreconciled days."""
+
+    items: List[ContractorSummaryRow] = []
+    total: ContractorSummaryIndicators
+    missing_days: List[date_type] = Field([], description="Days of the period reconciliation was not run for")
 
 
 class FilterRef(BaseModel):

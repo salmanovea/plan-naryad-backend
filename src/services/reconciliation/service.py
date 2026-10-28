@@ -14,8 +14,30 @@ from src.models.dbo.tables.reconciliation import ReconciliationPattern, Reconcil
 from src.services.access.service import AccessService
 from src.services.common import BaseService, floor_label
 from src.services.report_cells import CellKey, HousingSlice, ReportCellsService
+from src.services.sync.service import SyncReportService
 
 DONE_PERCENT = Decimal("100")
+# A position without a report on this many of its contractor's plan days in a row is chronic.
+CHRONIC_NO_REPORT_DAYS = 3
+
+MatchKey = Tuple[Optional[UUID], UUID, UUID, UUID]
+PlaceKey = Tuple[UUID, UUID, UUID]
+
+
+def _match_key(row: Any) -> MatchKey:
+    """(contractor, section, floor, work) — the key a plan item and its facts share within a day."""
+    return row.contractor_id, row.section_id, row.floor_id, row.work_id
+
+
+def _is_report(fact: Any) -> bool:
+    """Whether a mirrored fact counts as a report: it has to carry progress.
+
+    Raport keeps zero-percent rows, and they say nothing was done. A fact entered in volumes
+    may have no percent at all; then its volume decides.
+    """
+    if fact.percent is not None:
+        return fact.percent > 0
+    return (fact.volume or 0) > 0
 
 
 def _summary_rates(
@@ -54,6 +76,7 @@ class ReconciliationService(BaseService):
         self.contractor_manager = managers.ContractorManager(db)
         self.construction_object_manager = managers.ConstructionObjectManager(db)
         self.report_cells = ReportCellsService(db)
+        self.sync = SyncReportService(db)
 
     async def _narrow_to_contractors(self, filters: dict) -> None:
         """Replace the «Подрядчик» selector in `filters` with the contractor list it resolves to."""
@@ -284,6 +307,61 @@ class ReconciliationService(BaseService):
         summary = await self.daily_summary_manager.get_enriched_by_id(summary_id)
         return self._enrich_summary(summary) if summary else None
 
+    async def contractor_summary(
+        self,
+        housing_id: Optional[UUID] = None,
+        project_id: Optional[UUID] = None,
+        date_from: Optional[date] = None,
+        date_to: Optional[date] = None,
+        contractor_id: Optional[UUID] = None,
+    ) -> Dict:
+        """«Сводка»: four indicators per contractor over a period, plus their total.
+
+        Counted from the stored results, so the tab always agrees with the results table:
+        issued = every planned row, reported + not_reported = issued, unplanned = facts
+        outside the plan. `missing_days` lists the days of the period reconciliation was
+        never run for — their positions are simply absent from the counts.
+        """
+        await self._authorize_filters({"housing_id": housing_id})
+        housing_ids: Optional[list[UUID]] = None
+        if housing_id:
+            housing_ids = [housing_id]
+        elif project_id:
+            housing_ids = await self._housings_in_scope(None, project_id) or [UUID(int=0)]
+        period = {"date__gte": date_from, "date__lte": date_to, "housing_id__in": housing_ids}
+
+        totals = await self.reconciliation_manager.get_contractor_totals(
+            **period,
+            contractor_id__in=await self.access.contractor_filter(contractor_id),
+            id__in=self.access.result_ids(),
+        )
+        contractors = await self.contractor_manager.get_by_ids([t.contractor_id for t in totals if t.contractor_id])
+        names = {c.id: c.name for c in contractors}
+        indicators = ("issued", "reported", "not_reported", "unplanned")
+        items = sorted(
+            (
+                {
+                    "contractor_id": t.contractor_id,
+                    "contractor_name": names.get(t.contractor_id),
+                    **{key: getattr(t, key) for key in indicators},
+                }
+                for t in totals
+            ),
+            key=lambda item: (item["contractor_name"] is None, item["contractor_name"] or ""),
+        )
+
+        missing_days: list[date] = []
+        if date_from and date_to:
+            reconciled = await self.daily_summary_manager.get_dates(**period, id__in=self.access.summary_ids())
+            span = (date_to - date_from).days + 1
+            missing_days = [d for d in (date_from + timedelta(days=i) for i in range(span)) if d not in reconciled]
+
+        return {
+            "items": items,
+            "total": {key: sum(item[key] for item in items) for key in indicators},
+            "missing_days": missing_days,
+        }
+
     async def get_result(self, result_id: UUID) -> Optional[ReconciliationResultSchema]:
         """Fetch a single reconciliation result with denormalized labels."""
         await self.access.require_results([result_id])
@@ -325,24 +403,68 @@ class ReconciliationService(BaseService):
         return ReconciliationStatus.NOT_DONE, _fraction(current)
 
     @staticmethod
-    def detect_patterns(
-        status: ReconciliationStatus,
-        plan_section_id: Optional[UUID],
-        fact_section_id: Optional[UUID],
-        plan_floor_id: Optional[UUID],
-        fact_floor_id: Optional[UUID],
-        plan_work_id: Optional[UUID],
-        fact_work_id: Optional[UUID],
-    ) -> Optional[ReconciliationPattern]:
-        if status != ReconciliationStatus.UNPLANNED:
-            return None
-        if plan_work_id and fact_work_id and plan_work_id != fact_work_id:
-            return ReconciliationPattern.WRONG_WORK_TYPE
-        if (plan_section_id and fact_section_id and plan_section_id != fact_section_id) or (
-            plan_floor_id and fact_floor_id and plan_floor_id != fact_floor_id
-        ):
-            return ReconciliationPattern.WRONG_LOCATION
-        return None
+    def _mark_misplaced(rows: list[Dict]) -> None:
+        """Flag a day's unplanned rows that stand in for a position left without a report.
+
+        WRONG_LOCATION: the same contractor has an unreported position on the same work
+        elsewhere. WRONG_WORK_TYPE: the same contractor has an unreported position on the same
+        section and floor, but on another work. An unplanned row never shares the full key
+        with a position, so the other half of each comparison is bound to differ. When both
+        apply, the location wins.
+        """
+        unreported = [r for r in rows if r["status"] == ReconciliationStatus.NO_REPORT]
+        for row in rows:
+            if row["status"] != ReconciliationStatus.UNPLANNED or row["contractor_id"] is None:
+                continue
+            own = [p for p in unreported if p["contractor_id"] == row["contractor_id"]]
+            if any(p["work_id"] == row["work_id"] for p in own):
+                row["pattern"] = ReconciliationPattern.WRONG_LOCATION
+            elif any(p["section_id"] == row["section_id"] and p["floor_id"] == row["floor_id"] for p in own):
+                row["pattern"] = ReconciliationPattern.WRONG_WORK_TYPE
+
+    @staticmethod
+    def _mark_chronic(rows: list[Dict], history: Dict[Optional[UUID], list[set[PlaceKey]]]) -> None:
+        """Flag positions left without a report on CHRONIC_NO_REPORT_DAYS plan days in a row.
+
+        «In a row» counts only the days the contractor had positions: a day off breaks
+        nothing, a plan day without this position breaks the series. `history` keeps, per
+        contractor and oldest first, the unreported (section, floor, work) of each earlier plan
+        day; the day being built is appended to it, so days have to come in date order.
+        """
+        lookback = CHRONIC_NO_REPORT_DAYS - 1
+        unreported: Dict[Optional[UUID], set[PlaceKey]] = {}
+        for row in rows:
+            if row["status"] == ReconciliationStatus.UNPLANNED:
+                continue
+            places = unreported.setdefault(row["contractor_id"], set())
+            if row["status"] == ReconciliationStatus.NO_REPORT:
+                places.add((row["section_id"], row["floor_id"], row["work_id"]))
+
+        for row in rows:
+            if row["status"] != ReconciliationStatus.NO_REPORT:
+                continue
+            previous = history.get(row["contractor_id"], [])[-lookback:]
+            place = (row["section_id"], row["floor_id"], row["work_id"])
+            if len(previous) == lookback and all(place in day for day in previous):
+                row["pattern"] = ReconciliationPattern.CHRONIC_NO_REPORT
+
+        for contractor_id, places in unreported.items():
+            history.setdefault(contractor_id, []).append(places)
+
+    async def _chronic_history(self, housing_id: UUID, before: date) -> Dict[Optional[UUID], list[set[PlaceKey]]]:
+        """Unreported places of each contractor's last plan days before the run, oldest first.
+
+        Read from stored results: a day reconciled earlier is taken as it was saved then.
+        """
+        rows = await self.reconciliation_manager.get_last_plan_days(
+            housing_id, before, CHRONIC_NO_REPORT_DAYS - 1, self.access.result_ids()
+        )
+        by_day: Dict[Optional[UUID], Dict[date, set[PlaceKey]]] = {}
+        for row in rows:
+            places = by_day.setdefault(row.contractor_id, {}).setdefault(row.date, set())
+            if row.status == ReconciliationStatus.NO_REPORT:
+                places.add((row.section_id, row.floor_id, row.work_id))
+        return {contractor_id: [days[d] for d in sorted(days)] for contractor_id, days in by_day.items()}
 
     def _build_summary_data(
         self,
@@ -427,6 +549,11 @@ class ReconciliationService(BaseService):
         is run**, which is one snapshot for the whole range, not a value per day. The
         chessboard is therefore read once per housing, and only for the works that actually
         appear in the range's plans and facts — not all 657 of the sequence.
+
+        Facts are pulled from Raport for the same range first, so an evening run sees what
+        was entered that day instead of waiting for the nightly sync. A housing whose facts
+        could not be read is still reconciled against the mirror and counted in
+        `facts_sync_failed`.
         """
         self.access.require_business_write()
         date_to = date_to or date_from
@@ -438,8 +565,14 @@ class ReconciliationService(BaseService):
 
         total_results = 0
         total_summaries = 0
+        sync_totals = {"facts_synced": 0, "facts_removed": 0, "facts_sync_failed": 0}
 
         for hid in housing_ids:
+            synced = await self._sync_facts(hid, date_from, date_to)
+            sync_totals["facts_synced"] += synced.get("work_facts", 0)
+            sync_totals["facts_removed"] += synced.get("removed", 0)
+            sync_totals["facts_sync_failed"] += 0 if synced.get("complete", True) else 1
+
             plans = await self.plan_item_manager.search(
                 housing_id=hid, date__gte=date_from, date__lte=date_to, id__in=self.access.plan_item_ids()
             )
@@ -459,6 +592,7 @@ class ReconciliationService(BaseService):
             for fact in facts:
                 facts_by_day.setdefault(fact.work_date, []).append(fact)
 
+            history = await self._chronic_history(hid, date_from)
             for day in days:
                 await self.reconciliation_manager.delete_by_date_and_housing(day, hid, self.access.result_ids())
                 await self.daily_summary_manager.delete_by_date_and_housing(day, hid, self.access.summary_ids())
@@ -466,6 +600,8 @@ class ReconciliationService(BaseService):
                 results_data = self._build_results(
                     day, hid, plans_by_day.get(day, []), facts_by_day.get(day, []), slice_
                 )
+                self._mark_misplaced(results_data)
+                self._mark_chronic(results_data, history)
                 for start in range(0, len(results_data), self._RESULT_BATCH_SIZE):
                     end = start + self._RESULT_BATCH_SIZE
                     await self.reconciliation_manager.bulk_insert(
@@ -483,7 +619,15 @@ class ReconciliationService(BaseService):
             "housing_count": len(housing_ids),
             "total_results": total_results,
             "total_summaries": total_summaries,
+            **sync_totals,
         }
+
+    async def _sync_facts(self, housing_id: UUID, date_from: date, date_to: date) -> Dict:
+        """Mirror the housing's Raport facts for the range; nothing to do for a local-only housing."""
+        housing = await self.housing_manager.get_by_id(housing_id)
+        if not housing or not housing.raport_id:
+            return {}
+        return await self.sync.sync_work_facts(housing.raport_id, date_from=date_from, date_to=date_to)
 
     async def _housings_in_scope(
         self,
@@ -515,13 +659,16 @@ class ReconciliationService(BaseService):
         facts: list,
         slice_: HousingSlice,
     ) -> list[Dict]:
-        """One day's reconciliation rows for a housing."""
+        """One day's reconciliation rows for a housing; patterns are marked by the caller.
+
+        A row backed by several facts links the latest submitted one.
+        """
         matches = self._match(plans, facts)
         rows: list[Dict] = []
 
         for match in matches:
             plan = match.get("plan")
-            fact = match.get("fact")
+            fact = max(match["facts"], key=lambda f: f.submitted_at or datetime.min, default=None)
 
             # «% Исходный» comes from the position; an unplanned row has none.
             source_percent = plan.source_percent if plan else None
@@ -531,21 +678,6 @@ class ReconciliationService(BaseService):
             status, completion_ratio = self.classify_status(
                 source_percent, fact_percent, match["has_plan"], match["has_fact"]
             )
-            pattern = self.detect_patterns(
-                status,
-                plan.section_id if plan else None,
-                fact.section_id if fact else None,
-                plan.floor_id if plan else None,
-                fact.floor_id if fact else None,
-                plan.work_id if plan else None,
-                fact.work_id if fact else None,
-            )
-
-            fact_submitted_at = fact.submitted_at if fact else None
-            fact_is_late = False
-            if fact_submitted_at:
-                deadline = datetime.combine(day, datetime.min.time().replace(hour=20))
-                fact_is_late = fact_submitted_at > deadline
 
             rows.append(
                 {
@@ -562,11 +694,10 @@ class ReconciliationService(BaseService):
                     "planned_volume": Decimal("0"),
                     "actual_volume": Decimal("0"),
                     "status": status,
-                    "pattern": pattern,
+                    "pattern": None,
                     "plan_item_id": plan.id if plan else None,
                     "work_fact_id": fact.id if fact else None,
-                    "fact_submitted_at": fact_submitted_at,
-                    "fact_is_late": fact_is_late,
+                    "fact_submitted_at": fact.submitted_at if fact else None,
                 }
             )
         return rows
@@ -586,16 +717,18 @@ class ReconciliationService(BaseService):
     def _match(plans: list, facts: list) -> list[Dict]:
         """Pair plans with facts on (contractor, section, floor, work), per the spec.
 
-        Unmatched rows on either side stay as their own row: a plan without a fact, and a fact
-        that was never planned — both are things the screen has to show.
+        Every plan item is a row of its own, and so is every key that has facts but no plan
+        («факт без плана»). Facts sharing a key are kept together rather than overwriting one
+        another; a fact without progress (`_is_report`) is not a report and takes no part.
         """
-        MatchKey = Tuple[Optional[UUID], UUID, UUID, UUID]
-        plans_dict: Dict[MatchKey, Any] = {(p.contractor_id, p.section_id, p.floor_id, p.work_id): p for p in plans}
-        facts_dict: Dict[MatchKey, Any] = {(f.contractor_id, f.section_id, f.floor_id, f.work_id): f for f in facts}
+        facts_by_key: Dict[MatchKey, list] = {}
+        for fact in facts:
+            if _is_report(fact):
+                facts_by_key.setdefault(_match_key(fact), []).append(fact)
 
         matches: list[Dict] = []
-        for key, plan in plans_dict.items():
-            fact = facts_dict.pop(key, None)
+        for plan in plans:
+            group = facts_by_key.get(_match_key(plan), [])
             matches.append(
                 {
                     "contractor_id": plan.contractor_id,
@@ -603,20 +736,23 @@ class ReconciliationService(BaseService):
                     "floor_id": plan.floor_id,
                     "work_id": plan.work_id,
                     "plan": plan,
-                    "fact": fact,
+                    "facts": group,
                     "has_plan": True,
-                    "has_fact": fact is not None,
+                    "has_fact": bool(group),
                 }
             )
-        for key, fact in facts_dict.items():
+        planned = {_match_key(p) for p in plans}
+        for (contractor_id, section_id, floor_id, work_id), group in facts_by_key.items():
+            if (contractor_id, section_id, floor_id, work_id) in planned:
+                continue
             matches.append(
                 {
-                    "contractor_id": fact.contractor_id,
-                    "section_id": fact.section_id,
-                    "floor_id": fact.floor_id,
-                    "work_id": fact.work_id,
+                    "contractor_id": contractor_id,
+                    "section_id": section_id,
+                    "floor_id": floor_id,
+                    "work_id": work_id,
                     "plan": None,
-                    "fact": fact,
+                    "facts": group,
                     "has_plan": False,
                     "has_fact": True,
                 }

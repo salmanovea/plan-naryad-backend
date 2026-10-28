@@ -93,6 +93,8 @@ def _service(session, cells: dict) -> ReconciliationService:
     service = ReconciliationService(session)
     service.report_cells = MagicMock()
     service.report_cells.get_housing_slice = AsyncMock(return_value=HousingSlice(cells=cells))
+    service.sync = MagicMock()
+    service.sync.sync_work_facts = AsyncMock(return_value={"work_facts": 0, "removed": 0, "complete": True})
     return service
 
 

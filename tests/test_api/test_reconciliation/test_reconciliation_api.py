@@ -12,13 +12,15 @@ HOUSING_1_ID = "11111111-1111-1111-1111-111111111111"
 def _raport_stub(monkeypatch):
     """Manual creation validates the assignment against live Raport; stub it out.
 
-    The contractor from the fixtures is treated as assigned everywhere, and the chessboard
-    comes back empty — enough for the API-level checks in this module.
+    The contractor from the fixtures is treated as assigned everywhere, the chessboard
+    comes back empty, and the fact sync before a run reads nothing — enough for the API-level
+    checks in this module.
     """
     from src.services.contractor_works import HousingAssignments
     from src.services.contractor_works.service import ContractorWorksService
     from src.services.report_cells import HousingSlice
     from src.services.report_cells.service import ReportCellsService
+    from src.services.sync.service import SyncReportService
 
     async def _contractors(self, work_id, floor_id):
         return [UUID(CONTRACTOR_ID)]
@@ -29,9 +31,13 @@ def _raport_stub(monkeypatch):
     async def _assignments(self, housing_id):
         return HousingAssignments()
 
+    async def _sync_facts(self, housing_raport_id, date_from=None, date_to=None):
+        return {"work_facts": 0, "removed": 0, "complete": True}
+
     monkeypatch.setattr(ContractorWorksService, "get_contractors_for_cell", _contractors)
     monkeypatch.setattr(ContractorWorksService, "get_housing_assignments", _assignments)
     monkeypatch.setattr(ReportCellsService, "get_housing_slice", _slice)
+    monkeypatch.setattr(SyncReportService, "sync_work_facts", _sync_facts)
 
 
 @pytest.mark.smoke
@@ -237,3 +243,22 @@ async def test_filter_options_are_empty_outside_the_reconciled_range(client):
         "floors": [],
         "contractors": [],
     }
+
+
+async def test_contractor_summary_returns_the_four_indicators(client):
+    await _seed_plan_and_fact(client)
+    await client.post(
+        f"{API}/reconciliation/run", json={"date_from": RECON_DATE, "date_to": RECON_DATE, "housing_id": HOUSING_1_ID}
+    )
+
+    response = await client.get(
+        f"{API}/reconciliation/contractor-summary",
+        params={"housing_id": HOUSING_1_ID, "date_from": RECON_DATE, "date_to": "2025-03-04"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert set(data["total"]) == {"issued", "reported", "not_reported", "unplanned"}
+    assert data["total"]["issued"] == data["total"]["reported"] + data["total"]["not_reported"]
+    assert [item["contractor_id"] for item in data["items"]] == [CONTRACTOR_ID]
+    assert data["missing_days"] == ["2025-03-04"]

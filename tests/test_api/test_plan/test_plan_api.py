@@ -81,6 +81,29 @@ async def test_create_plan_item_returns_201(client):
     assert body["data"]["source"] == "manual"
 
 
+async def test_manual_position_cannot_be_added_twice(client):
+    """Reconciliation pairs plan and fact on (date, contractor, section, floor, work)."""
+    payload = {
+        "date": "2030-01-15",
+        "housing_id": HOUSING_1_ID,
+        "section_id": SECTION_1_ID,
+        "floor_id": FLOOR_1_ID,
+        "work_id": WORK_1_ID,
+        "contractor_id": CONTRACTOR_1_ID,
+    }
+
+    first = await client.post(f"{API}/plan-naryad/", json=payload)
+    second = await client.post(f"{API}/plan-naryad/", json=payload)
+
+    assert first.status_code == 201, first.json()
+    assert second.status_code == 400
+    assert "уже есть в план-наряде на 15.01.2030" in second.json()["message"]
+    daily = await client.get(
+        f"{API}/plan-naryad/daily", params={"target_date": "2030-01-15", "housing_id": HOUSING_1_ID}
+    )
+    assert daily.json()["data"]["total_items"] == 1
+
+
 async def test_get_plan_item_not_found_returns_404(client):
     response = await client.get(f"{API}/plan-naryad/00000000-0000-0000-0000-000000000000")
 

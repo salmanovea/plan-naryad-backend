@@ -35,14 +35,12 @@ class ReconciliationResultAdmin(BaseAdmin, model=ReconciliationResult):  # type:
         ReconciliationResult.plan_item,
         ReconciliationResult.work_fact,
         ReconciliationResult.fact_submitted_at,
-        ReconciliationResult.fact_is_late,
         ReconciliationResult.created_at,
     ]
     form_columns = [
         ReconciliationResult.date,
         ReconciliationResult.status,
         ReconciliationResult.pattern,
-        ReconciliationResult.fact_is_late,
     ]
     # contractor / plan_item / work_fact are nullable — ids only for those.
     column_searchable_list = [
