@@ -69,9 +69,10 @@ async def get_daily_plan(
     target_date: date = Query(..., description="Date to get plan for"),
     housing_id: UUID = Query(..., description="Housing ID"),
     section_id: UUID = Query(None, description="Optional section filter within the housing"),
+    contractor_id: UUID = Query(None, description="«Подрядчик» selector; forced to own companies for external users"),
     service: AutogenerationService = Depends(get_plan_service),
 ) -> DataResponseSchema[DailyPlanResponse]:
-    search_kwargs: dict = {"date": target_date, "housing_id": housing_id}
+    search_kwargs: dict = {"date": target_date, "housing_id": housing_id, "contractor_id": contractor_id}
     if section_id:
         search_kwargs["section_id"] = section_id
     items = await service.get_plan_items(**search_kwargs)

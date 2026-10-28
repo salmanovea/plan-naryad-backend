@@ -152,7 +152,13 @@ class AutogenerationService(BaseService):
         return [self._enrich_plan_item(i) for i in items], total
 
     async def get_plan_items(self, order_by: Optional[List[str]] = None, **filters) -> List[PlanItemSchema]:
-        """Fetch plan items (no pagination) with denormalized labels."""
+        """Fetch plan items (no pagination) with denormalized labels.
+
+        `contractor_id` is the page-level «Подрядчик» selector, forced for an external user.
+        """
+        contractor_ids = await self.access.contractor_filter(filters.pop("contractor_id", None))
+        if contractor_ids is not None:
+            filters["contractor_id__in"] = contractor_ids
         await self._authorize_filters(filters)
         allowed_ids = self.access.plan_item_ids()
         if allowed_ids is not None:
@@ -335,6 +341,9 @@ class AutogenerationService(BaseService):
         """Contractors assigned to a work on a floor, per the spec's dropdown rule."""
         await self.access.require_floors([floor_id])
         contractor_ids = await self.contractor_works.get_contractors_for_cell(work_id=work_id, floor_id=floor_id)
+        own = await self.access.contractor_filter(None)
+        if own is not None:
+            contractor_ids = [c for c in contractor_ids if c in own]
         if not contractor_ids:
             return []
         contractors = await self.contractor_manager.get_by_ids(list(contractor_ids))

@@ -83,6 +83,9 @@ async def reconciliation_filter_options(
     project_id: UUID | None = Query(None, description="Project, when no single housing is chosen"),
     date_from: date | None = Query(None, description="Start of the reconciled range (inclusive)"),
     date_to: date | None = Query(None, description="End of the reconciled range (inclusive)"),
+    contractor_id: UUID | None = Query(
+        None, description="«Подрядчик» selector; forced to own companies for external users"
+    ),
     service: ReconciliationService = Depends(get_reconciliation_service),
 ) -> DataResponseSchema[ReconciliationFilterOptions]:
     """Values present in the scope, per filterable column.
@@ -95,6 +98,7 @@ async def reconciliation_filter_options(
         project_id=project_id,
         date_from=date_from,
         date_to=date_to,
+        contractor_id=contractor_id,
     )
     return DataResponseSchema[ReconciliationFilterOptions](data=ReconciliationFilterOptions.model_validate(options))
 
@@ -131,6 +135,7 @@ async def list_daily_summaries(
         pagination=pagination,
         order_by=["-date"],
         project_id=filter_data.get("project_id"),
+        contractor_id=filter_data.get("contractor_id"),
         **summary_filters,
     )
     return ListDataResponseSchema[DailySummarySchema].create(

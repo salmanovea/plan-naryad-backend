@@ -35,6 +35,7 @@ async def get_dashboard_overview(
         date_to=date_to,
         housing_id=filters.housing_id,
         section_id=filters.section_id,
+        contractor_id=filters.contractor_id,
     )
     return DataResponseSchema[DashboardOverviewSchema](data=DashboardOverviewSchema(**overview))
 
@@ -52,6 +53,7 @@ async def get_dashboard_sections(
         housing_id=filters.housing_id,
         date_from=date_from,
         date_to=date_to,
+        contractor_id=filters.contractor_id,
     )
     return ListDataResponseSchema[DashboardSectionSchema].create(
         list_data=[DashboardSectionSchema.model_validate(row) for row in rows]

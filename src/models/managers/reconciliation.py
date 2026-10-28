@@ -2,7 +2,8 @@ from datetime import date
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, Text, cast, false, select
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -64,6 +65,17 @@ class DailySummaryManager(BaseManager[DailySummary]):
         fails with MissingGreenlet outside the async context.
         """
         return select(DailySummary).options(selectinload(DailySummary.housing))
+
+    @staticmethod
+    def with_contractors(query: Select, contractor_ids: list[UUID]) -> Select:
+        """Keep the summaries in which any of the contractors has a row.
+
+        SQL: `WHERE CAST(contractor_details AS JSONB) ?| ARRAY[:contractor_ids]`.
+        """
+        if not contractor_ids:
+            return query.where(false())
+        keys = cast([str(c) for c in contractor_ids], ARRAY(Text))
+        return query.where(cast(DailySummary.contractor_details, JSONB).has_any(keys))
 
     async def get_enriched_by_id(self, summary_id: UUID) -> Optional[DailySummary]:
         """Fetch a single summary by id with its housing eager-loaded."""

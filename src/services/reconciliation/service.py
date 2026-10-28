@@ -18,6 +18,19 @@ from src.services.report_cells import CellKey, HousingSlice, ReportCellsService
 DONE_PERCENT = Decimal("100")
 
 
+def _summary_rates(
+    planned: int, done_full: int, no_report: int, percent_sum: Decimal, percent_count: int
+) -> tuple[Decimal, Decimal, Decimal]:
+    """(completion_rate, weighted_completion, submission_rate) of a summary, as 0..1 fractions."""
+    quant = Decimal("0.0001")
+    completion = (Decimal(done_full) / Decimal(planned)).quantize(quant) if planned else Decimal("0")
+    weighted = (
+        (percent_sum / (Decimal(percent_count) * DONE_PERCENT)).quantize(quant) if percent_count else Decimal("0")
+    )
+    submission = (Decimal(planned - no_report) / Decimal(planned)).quantize(quant) if planned else Decimal("0")
+    return completion, weighted, submission
+
+
 def _fraction(percent: Optional[Decimal]) -> Decimal:
     """A 0..100 percent as a 0..1 fraction, the scale the rates are stored in."""
     if percent is None:
@@ -41,6 +54,14 @@ class ReconciliationService(BaseService):
         self.contractor_manager = managers.ContractorManager(db)
         self.construction_object_manager = managers.ConstructionObjectManager(db)
         self.report_cells = ReportCellsService(db)
+
+    async def _narrow_to_contractors(self, filters: dict) -> None:
+        """Replace the «Подрядчик» selector in `filters` with the contractor list it resolves to."""
+        selected = await self.access.contractor_filter(filters.pop("contractor_id", None))
+        if selected is None:
+            return
+        column = filters.get("contractor_id__in")
+        filters["contractor_id__in"] = [c for c in selected if column is None or c in column]
 
     async def _authorize_filters(self, filters: dict) -> None:
         """Validate selectors declared by this domain's operations."""
@@ -83,7 +104,12 @@ class ReconciliationService(BaseService):
         order_by: List[str],
         **filters,
     ) -> Tuple[List[ReconciliationResultSchema], int]:
-        """List reconciliation results with denormalized section/floor/etc labels."""
+        """List reconciliation results with denormalized section/floor/etc labels.
+
+        `contractor_id` is the page-level «Подрядчик» selector (forced for an external user);
+        it narrows the table's own `contractor_id__in` column filter rather than replacing it.
+        """
+        await self._narrow_to_contractors(filters)
         await self._authorize_filters(filters)
         allowed_ids = self.access.result_ids()
         if allowed_ids is not None:
@@ -101,6 +127,7 @@ class ReconciliationService(BaseService):
         project_id: Optional[UUID] = None,
         date_from: Optional[date] = None,
         date_to: Optional[date] = None,
+        contractor_id: Optional[UUID] = None,
     ) -> dict:
         """Values present in a reconciled scope, one list per filterable column.
 
@@ -121,6 +148,7 @@ class ReconciliationService(BaseService):
             filters["date__gte"] = date_from
         if date_to:
             filters["date__lte"] = date_to
+        filters["contractor_id__in"] = await self.access.contractor_filter(contractor_id)
 
         rows = await self.reconciliation_manager.search(**filters, id__in=self.access.result_ids())
         if not rows:
@@ -175,20 +203,58 @@ class ReconciliationService(BaseService):
         schema.housing_name = summary.housing.name if summary.housing else None
         return schema
 
+    @staticmethod
+    def _contractor_slice(summary: DailySummarySchema, contractor_ids: list[UUID]) -> DailySummarySchema:
+        """Rebuild a housing summary from the `contractor_details` of the selected contractors.
+
+        Every row without a plan item is UNPLANNED, so `planned = total - unplanned`. Summaries
+        written before the percent stats existed get a zero `weighted_completion`.
+        """
+        details = summary.contractor_details if isinstance(summary.contractor_details, dict) else {}
+        picked = {str(c): details[str(c)] for c in contractor_ids if str(c) in details}
+
+        def total(key: str) -> int:
+            return sum(int(stats.get(key) or 0) for stats in picked.values())
+
+        planned = total("total") - total("unplanned")
+        percent_sum = sum((Decimal(str(stats.get("fact_percent_sum") or 0)) for stats in picked.values()), Decimal(0))
+        completion, weighted, submission = _summary_rates(
+            planned, total("done_full"), total("no_report"), percent_sum, total("fact_percent_count")
+        )
+        return summary.model_copy(
+            update={
+                "total_planned": planned,
+                "total_done_full": total("done_full"),
+                "total_done_partial": total("done_partial"),
+                "total_done_over": total("done_over"),
+                "total_not_done": total("not_done"),
+                "total_no_report": total("no_report"),
+                "total_unplanned": total("unplanned"),
+                "completion_rate": completion,
+                "weighted_completion": weighted,
+                "submission_rate": submission,
+                "contractor_details": picked,
+            }
+        )
+
     async def list_summaries(
         self,
         pagination: PaginationParams,
         order_by: List[str],
         project_id: Optional[UUID] = None,
+        contractor_id: Optional[UUID] = None,
         **filters,
     ) -> Tuple[List[DailySummarySchema], int]:
         """List daily summaries with the denormalized housing name.
 
         `project_id` is resolved to the project's housings because the table itself
         only carries `housing_id`. An explicit housing filter wins over the project.
+        `contractor_id` is the page-level «Подрядчик» selector (forced for an external user):
+        only days the selection worked on are listed, each rebuilt from its contractor stats.
         """
         if project_id:
             await self.access.require_projects([project_id])
+        contractor_ids = await self.access.contractor_filter(contractor_id)
         await self._authorize_filters(filters)
         allowed_ids = self.access.summary_ids()
         if allowed_ids is not None:
@@ -197,11 +263,20 @@ class ReconciliationService(BaseService):
             housing_ids = await self._housings_in_scope(None, project_id)
             filters["housing_id__in"] = housing_ids or [UUID(int=0)]
         query = self.daily_summary_manager.get_enriched_query()
+        count_query = None
+        if contractor_ids is not None:
+            query = self.daily_summary_manager.with_contractors(query, contractor_ids)
+            count_query = self.daily_summary_manager.with_contractors(
+                self.daily_summary_manager.get_base_query(), contractor_ids
+            )
         items = await self.daily_summary_manager.search(
             query=query, order_by=order_by, pagination=pagination, **filters
         )
-        total = await self.daily_summary_manager.count(**filters)
-        return [self._enrich_summary(i) for i in items], total
+        total = await self.daily_summary_manager.count(query=count_query, **filters)
+        summaries = [self._enrich_summary(i) for i in items]
+        if contractor_ids is not None:
+            summaries = [self._contractor_slice(s, contractor_ids) for s in summaries]
+        return summaries, total
 
     async def get_summary(self, summary_id: UUID) -> Optional[DailySummarySchema]:
         """Fetch a single daily summary with the denormalized housing name."""
@@ -278,17 +353,19 @@ class ReconciliationService(BaseService):
         counts = {s: 0 for s in ReconciliationStatus}
         total_planned = 0
         fact_percents: List[Decimal] = []
+        contractor_percents: Dict[str, List[Decimal]] = {}
         contractors_stats: Dict[str, Dict] = {}
 
         for r in results_data:
             status = r["status"]
             counts[status] = counts.get(status, 0) + 1
+            cid = str(r["contractor_id"])
             if r.get("plan_item_id"):
                 total_planned += 1
                 if r.get("fact_percent") is not None:
                     fact_percents.append(r["fact_percent"])
+                    contractor_percents.setdefault(cid, []).append(r["fact_percent"])
 
-            cid = str(r["contractor_id"])
             if cid not in contractors_stats:
                 status_keys = (
                     "total",
@@ -305,22 +382,16 @@ class ReconciliationService(BaseService):
             if status_key in contractors_stats[cid]:
                 contractors_stats[cid][status_key] += 1
 
+        # Kept per contractor so `list_summaries` can rebuild `weighted_completion` for a selection.
+        for cid, stats in contractors_stats.items():
+            percents = contractor_percents.get(cid, [])
+            stats["fact_percent_sum"] = str(sum(percents, Decimal("0")))
+            stats["fact_percent_count"] = len(percents)
+
         done_full = counts.get(ReconciliationStatus.DONE_FULL, 0)
         no_report = counts.get(ReconciliationStatus.NO_REPORT, 0)
-
-        quant = Decimal("0.0001")
-        completion_rate = (
-            (Decimal(done_full) / Decimal(total_planned)).quantize(quant) if total_planned > 0 else Decimal("0")
-        )
-        weighted_completion = (
-            (sum(fact_percents) / (Decimal(len(fact_percents)) * DONE_PERCENT)).quantize(quant)
-            if fact_percents
-            else Decimal("0")
-        )
-        submission_rate = (
-            (Decimal(total_planned - no_report) / Decimal(total_planned)).quantize(quant)
-            if total_planned > 0
-            else Decimal("0")
+        completion_rate, weighted_completion, submission_rate = _summary_rates(
+            total_planned, done_full, no_report, sum(fact_percents, Decimal("0")), len(fact_percents)
         )
 
         return {

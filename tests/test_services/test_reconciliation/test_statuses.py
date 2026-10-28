@@ -284,6 +284,10 @@ async def test_summary_counts_and_rates(async_test_session):
     # One of two planned rows finished → 0.5; mean percent (100 + 50) / 200 → 0.75.
     assert summary.completion_rate == Decimal("0.5000")
     assert summary.weighted_completion == Decimal("0.7500")
+    # Per-contractor stats carry what a «Подрядчик» selection needs to rebuild the rates.
+    stats = summary.contractor_details[str(CONTRACTOR)]
+    assert (stats["total"], stats["done_full"], stats["unplanned"]) == (2, 1, 0)
+    assert (Decimal(stats["fact_percent_sum"]), stats["fact_percent_count"]) == (Decimal("150"), 2)
 
 
 async def test_a_large_day_is_inserted_in_batches(async_test_session):

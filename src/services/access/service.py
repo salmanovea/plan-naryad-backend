@@ -260,12 +260,25 @@ class AccessService(BaseService):
         if self.scope.unrestricted:
             return None
         return self.access_manager.contractor_ids(
-            self.scope.projects, self.scope.contractors if self.scope.role == PlanRole.CONTRACTOR else None, self.grants
+            self.scope.projects, self.scope.contractors if self.scope.own_contractors_only else None, self.grants
         )
 
     async def require_contractors(self, ids: Iterable[UUID]) -> None:
         """Authorize all selected contractors before the operation begins."""
         await self._require(self.contractor_ids(), ids)
+
+    async def contractor_filter(self, contractor_id: UUID | None) -> list[UUID] | None:
+        """Resolve the page-level «Подрядчик» selector into the contractors the data is narrowed to.
+
+        `None` means every contractor. An external user cannot lift the filter: without a
+        choice they get their own companies, and an empty list when Raport assigns them none.
+        """
+        if contractor_id is not None:
+            await self.require_contractors([contractor_id])
+            return [contractor_id]
+        if not self.scope.is_external:
+            return None
+        return await self.access_manager.ids(self.access_manager.contractor_ids((), self.scope.contractors))
 
     def budget_item_ids(self) -> IdQuery | None:
         """Explicit budget item ID filter for a domain operation."""

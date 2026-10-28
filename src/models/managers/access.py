@@ -145,6 +145,11 @@ class AccessManager(BaseManager[m.Project]):
             select(m.Contractor.id).where(m.Contractor.id.in_(union(*(q.correlate(None) for q in references))))
         ).correlate(None)
 
+    async def ids(self, query: IdQuery) -> list[UUID]:
+        """Materialize an ID query for filters that need concrete values."""
+        result = await self.db.execute(query)
+        return list(result.scalars().all())
+
     async def matching_ids(self, query: IdQuery, requested: Collection[UUID]) -> set[UUID]:
         """Check the whole selection with one query before any business side effect."""
         ids = query.subquery()

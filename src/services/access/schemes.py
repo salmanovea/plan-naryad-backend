@@ -47,11 +47,17 @@ class AccessScope:
     role: PlanRole
     projects: frozenset[str] = frozenset()
     contractors: frozenset[str] = frozenset()
+    is_external: bool = False
 
     @property
     def unrestricted(self) -> bool:
         """Whether the caller is exempt from project boundaries."""
         return self.role in {PlanRole.ADMIN, PlanRole.SERVICE, PlanRole.LOCAL}
+
+    @property
+    def own_contractors_only(self) -> bool:
+        """Whether the caller sees only the companies assigned to them in Raport."""
+        return self.role == PlanRole.CONTRACTOR or self.is_external
 
     @classmethod
     def from_user(cls, user: AccessPrincipal) -> "AccessScope":
@@ -68,7 +74,12 @@ class AccessScope:
             role = PlanRole.RS
         else:
             raise AccessDenied("Нет доступа к план-наряду.")
-        return cls(role, _raport_ids(user.data.get("projects")), _raport_ids(user.data.get("contractors")))
+        return cls(
+            role,
+            _raport_ids(user.data.get("projects")),
+            _raport_ids(user.data.get("contractors")),
+            is_external=user.data.get("is_external") is True,
+        )
 
 
 SCOPE_KEY = "plan_access"
