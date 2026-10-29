@@ -9,11 +9,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.config.postgres.db_config import get_session
 from src.models import managers
 from src.models.dbo.tables.reconciliation import ReconciliationStatus
+from src.services.access.service import AccessService
 from src.services.common import BaseService
 
 
 class DashboardService(BaseService):
     def __init__(self, db: AsyncSession):
+        self.access = AccessService(db)
         self.plan_item_manager = managers.PlanItemManager(db)
         self.work_fact_manager = managers.WorkFactManager(db)
         self.reconciliation_manager = managers.ReconciliationResultManager(db)
@@ -30,16 +32,20 @@ class DashboardService(BaseService):
         (DONE_FULL + DONE_OVER) / planned; submission_rate = (planned - NO_REPORT)
         / planned, where `planned` counts rows tied to a plan item.
         """
-        planned = await self.reconciliation_manager.count(**recon_filters, plan_item_id__isnotnull=True)
+        planned = await self.reconciliation_manager.count(
+            id__in=self.access.result_ids(), **recon_filters, plan_item_id__isnotnull=True
+        )
         if not planned:
             return None, None
 
         done = await self.reconciliation_manager.count(
+            id__in=self.access.result_ids(),
             **recon_filters,
             plan_item_id__isnotnull=True,
             status__in=[ReconciliationStatus.DONE_FULL, ReconciliationStatus.DONE_OVER],
         )
         no_report = await self.reconciliation_manager.count(
+            id__in=self.access.result_ids(),
             **recon_filters,
             plan_item_id__isnotnull=True,
             status=ReconciliationStatus.NO_REPORT,
@@ -55,9 +61,16 @@ class DashboardService(BaseService):
         date_to: date,
         housing_id: Optional[UUID] = None,
         section_id: Optional[UUID] = None,
+        contractor_id: Optional[UUID] = None,
     ) -> dict:
+        """KPIs of a housing (or a section) over a period, narrowed by the «Подрядчик» selector."""
         # Filters for entities that carry section_id (plan items, facts, results).
-        scoped_filters: dict = {"date__gte": date_from, "date__lte": date_to}
+        if housing_id:
+            await self.access.require_location(housing_id, section_id)
+        elif section_id:
+            await self.access.require_sections([section_id])
+        contractor_ids = await self.access.contractor_filter(contractor_id)
+        scoped_filters: dict = {"date__gte": date_from, "date__lte": date_to, "contractor_id__in": contractor_ids}
         if housing_id:
             scoped_filters["housing_id"] = housing_id
         if section_id:
@@ -68,15 +81,19 @@ class DashboardService(BaseService):
         fact_filters["work_date__lte"] = fact_filters.pop("date__lte")
 
         # Alerts have no section_id column — they stay at housing granularity.
-        alert_filters: dict = {"date__gte": date_from, "date__lte": date_to}
+        alert_filters: dict = {"date__gte": date_from, "date__lte": date_to, "contractor_id__in": contractor_ids}
         if housing_id:
             alert_filters["housing_id"] = housing_id
 
-        total_plan_items = await self.plan_item_manager.count(**scoped_filters)
-        total_work_facts = await self.work_fact_manager.count(**fact_filters)
-        total_reconciliation_results = await self.reconciliation_manager.count(**scoped_filters)
-        total_alerts = await self.alert_manager.count(**alert_filters)
-        total_critical_alerts = await self.alert_manager.count(**alert_filters, level="critical")
+        total_plan_items = await self.plan_item_manager.count(id__in=self.access.plan_item_ids(), **scoped_filters)
+        total_work_facts = await self.work_fact_manager.count(id__in=self.access.work_fact_ids(), **fact_filters)
+        total_reconciliation_results = await self.reconciliation_manager.count(
+            id__in=self.access.result_ids(), **scoped_filters
+        )
+        total_alerts = await self.alert_manager.count(id__in=self.access.alert_ids(), **alert_filters)
+        total_critical_alerts = await self.alert_manager.count(
+            id__in=self.access.alert_ids(), **alert_filters, level="critical"
+        )
 
         completion_rate, submission_rate = await self._completion_rates(**scoped_filters)
 
@@ -113,12 +130,15 @@ class DashboardService(BaseService):
         housing_id: UUID,
         date_from: date,
         date_to: date,
+        contractor_id: Optional[UUID] = None,
     ) -> list[dict]:
-        """Per-section KPI breakdown for one housing.
+        """Per-section KPI breakdown for one housing, narrowed by the «Подрядчик» selector.
 
         One row per section of the housing, ordered by section_number. Alert
         counts are intentionally absent — alerts have no section granularity.
         """
+        await self.access.require_housings([housing_id])
+        contractor_ids = await self.access.contractor_filter(contractor_id)
         sections = await self.section_manager.search(housing_id=housing_id, order_by=["section_number"])
         rows: list[dict] = []
         for section in sections:
@@ -127,6 +147,7 @@ class DashboardService(BaseService):
                 "date__lte": date_to,
                 "housing_id": housing_id,
                 "section_id": section.id,
+                "contractor_id__in": contractor_ids,
             }
             fact_scoped: dict = dict(scoped)
             fact_scoped["work_date__gte"] = fact_scoped.pop("date__gte")
@@ -137,9 +158,15 @@ class DashboardService(BaseService):
                 {
                     "section_id": section.id,
                     "section_name": section.name,
-                    "total_plan_items": await self.plan_item_manager.count(**scoped),
-                    "total_work_facts": await self.work_fact_manager.count(**fact_scoped),
-                    "total_reconciliation_results": await self.reconciliation_manager.count(**scoped),
+                    "total_plan_items": await self.plan_item_manager.count(
+                        id__in=self.access.plan_item_ids(), **scoped
+                    ),
+                    "total_work_facts": await self.work_fact_manager.count(
+                        id__in=self.access.work_fact_ids(), **fact_scoped
+                    ),
+                    "total_reconciliation_results": await self.reconciliation_manager.count(
+                        id__in=self.access.result_ids(), **scoped
+                    ),
                     "completion_rate": completion_rate,
                     "submission_rate": submission_rate,
                 }

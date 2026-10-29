@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date
 from typing import Dict, List, Optional, Tuple
 from uuid import UUID
 
@@ -12,7 +12,9 @@ from src.config.postgres.db_config import get_session
 from src.models import managers
 from src.models.dbo.tables.alert import Alert, AlertLevel, AlertType
 from src.models.dbo.tables.reconciliation import ReconciliationPattern, ReconciliationStatus
+from src.services.access.service import AccessService
 from src.services.common import BaseService
+from src.utils.business_time import business_now
 
 log = LoggerProvider().get_logger(__name__)
 
@@ -58,6 +60,7 @@ ESCALATION_RULES: Dict[str, List] = {
 
 class AlertService(BaseService):
     def __init__(self, db: AsyncSession):
+        self.access = AccessService(db)
         self.alert_manager = managers.AlertManager(db)
         self.plan_item_manager = managers.PlanItemManager(db)
         self.work_fact_manager = managers.WorkFactManager(db)
@@ -65,6 +68,18 @@ class AlertService(BaseService):
         self.contractor_manager = managers.ContractorManager(db)
         self.housing_manager = managers.HousingManager(db)
         self.tech_sequence_manager = managers.TechSequenceItemManager(db)
+
+    async def _authorize_filters(self, filters: dict) -> None:
+        """Validate selectors declared by this domain's operations."""
+        if housing_id := filters.get("housing_id"):
+            await self.access.require_location(housing_id, filters.get("section_id"), filters.get("floor_id"))
+        else:
+            if section_id := filters.get("section_id"):
+                await self.access.require_sections([section_id])
+            if floor_id := filters.get("floor_id"):
+                await self.access.require_floors([floor_id])
+        if contractor_id := filters.get("contractor_id"):
+            await self.access.require_contractors([contractor_id])
 
     @staticmethod
     def _enrich_alert(alert: Alert) -> AlertSchema:
@@ -81,6 +96,10 @@ class AlertService(BaseService):
         **filters,
     ) -> Tuple[List[AlertSchema], int]:
         """List alerts with denormalized housing/contractor names."""
+        await self._authorize_filters(filters)
+        allowed_ids = self.access.alert_ids()
+        if allowed_ids is not None:
+            filters["id__in"] = allowed_ids
         query = self.alert_manager.get_enriched_query()
         items = await self.alert_manager.search(query=query, order_by=order_by, pagination=pagination, **filters)
         total = await self.alert_manager.count(**filters)
@@ -88,10 +107,13 @@ class AlertService(BaseService):
 
     async def get_alert(self, alert_id: UUID) -> Optional[AlertSchema]:
         """Fetch a single alert with denormalized housing/contractor names."""
+        await self.access.require_alerts([alert_id])
         alert = await self.alert_manager.get_enriched_by_id(alert_id)
         return self._enrich_alert(alert) if alert else None
 
     async def generate_daily_alerts(self, housing_id: UUID, alert_date: date) -> List:
+        self.access.require_business_write()
+        await self.access.require_housings([housing_id])
         log.info(f"Generating daily alerts for housing {housing_id}, date {alert_date}")
         alerts_data = []
 
@@ -115,10 +137,16 @@ class AlertService(BaseService):
         alerts = []
 
         planned_contractors_ids = {
-            p.contractor_id for p in await self.plan_item_manager.search(housing_id=housing_id, date=alert_date)
+            p.contractor_id
+            for p in await self.plan_item_manager.search(
+                id__in=self.access.plan_item_ids(), housing_id=housing_id, date=alert_date
+            )
         }
         submitted_contractors_ids = {
-            f.contractor_id for f in await self.work_fact_manager.search(housing_id=housing_id, work_date=alert_date)
+            f.contractor_id
+            for f in await self.work_fact_manager.search(
+                id__in=self.access.work_fact_ids(), housing_id=housing_id, work_date=alert_date
+            )
         }
 
         for contractor_id in planned_contractors_ids:
@@ -134,7 +162,7 @@ class AlertService(BaseService):
                             "contractor_id": contractor_id,
                             "recipient_role": "RS",
                             "message": f"Подрядчик «{contractor.name}» не подал факт за {alert_date}.",
-                            "created_at": datetime.now(),
+                            "created_at": business_now(),
                         }
                     )
 
@@ -148,7 +176,7 @@ class AlertService(BaseService):
                     "housing_id": housing_id,
                     "recipient_role": "RS",
                     "message": f"Сводка за {alert_date} по объекту «{housing.name}» готова.",
-                    "created_at": datetime.now(),
+                    "created_at": business_now(),
                 }
             )
 
@@ -158,6 +186,7 @@ class AlertService(BaseService):
         alerts = []
 
         recon_items = await self.reconciliation_manager.search(
+            id__in=self.access.result_ids(),
             date=alert_date,
             housing_id=housing_id,
             status__in=[ReconciliationStatus.NOT_DONE, ReconciliationStatus.DONE_PARTIAL],
@@ -201,7 +230,7 @@ class AlertService(BaseService):
                             f"Критических отклонений: {len(items)}\n"
                             f"Пример: {items[0].status} (выполнение: {items[0].completion_ratio * 100:.0f}%)"
                         ),
-                        "created_at": datetime.now(),
+                        "created_at": business_now(),
                     }
                 )
 
@@ -211,6 +240,7 @@ class AlertService(BaseService):
         alerts = []
 
         pattern_items = await self.reconciliation_manager.search(
+            id__in=self.access.result_ids(),
             date=alert_date,
             housing_id=housing_id,
             pattern__in=[ReconciliationPattern.WRONG_LOCATION, ReconciliationPattern.WRONG_WORK_TYPE],
@@ -235,7 +265,7 @@ class AlertService(BaseService):
                             f"Подрядчик «{contractor.name}» выполнил работу {pattern_text}.\n"
                             f"Дата: {alert_date}"
                         ),
-                        "created_at": datetime.now(),
+                        "created_at": business_now(),
                     }
                 )
 
@@ -256,7 +286,7 @@ class AlertService(BaseService):
                             f"Объект: {housing.name}\n"
                             f"Просроченных работ: {len(overdue_items)}"
                         ),
-                        "created_at": datetime.now(),
+                        "created_at": business_now(),
                     }
                 )
 
@@ -265,7 +295,9 @@ class AlertService(BaseService):
     async def _system_alerts_data(self, housing_id: UUID, alert_date: date) -> List[Dict]:
         alerts = []
 
-        has_tech = bool(await self.tech_sequence_manager.search(housing_id=housing_id))
+        has_tech = bool(
+            await self.tech_sequence_manager.search(id__in=self.access.tech_sequence_ids(), housing_id=housing_id)
+        )
         if not has_tech:
             housing = await self.housing_manager.get_by_id(housing_id)
             if housing:
@@ -281,18 +313,20 @@ class AlertService(BaseService):
                             f"Для корпуса «{housing.name}» не задана техпоследовательность.\n"
                             f"Автогенерация план-наряда невозможна."
                         ),
-                        "created_at": datetime.now(),
+                        "created_at": business_now(),
                     }
                 )
 
         return alerts
 
     async def check_escalation(self, alert_id: UUID) -> bool:
+        self.access.require_business_write()
+        await self.access.require_alerts([alert_id])
         alert = await self.alert_manager.get_by_id(alert_id)
         if not alert or alert.acknowledged:
             return False
 
-        hours_since = (datetime.now() - alert.created_at).total_seconds() / 3600
+        hours_since = (business_now() - alert.created_at).total_seconds() / 3600
         rules = ESCALATION_RULES.get(alert.alert_type, [])
 
         for i, (hours_needed, next_role) in enumerate(rules):
@@ -301,7 +335,7 @@ class AlertService(BaseService):
             # already reached that level — note the default level is 1, not 0.
             if hours_since >= hours_needed and alert.escalation_level <= i + 1:
                 alert.escalation_level = i + 2
-                alert.escalated_at = datetime.now()
+                alert.escalated_at = business_now()
                 alert.recipient_role = next_role
                 alert.message = f"Эскалация → {next_role}\n\n{alert.message}"
                 await self.alert_manager.db.commit()
@@ -311,9 +345,10 @@ class AlertService(BaseService):
         return False
 
     async def run_escalation_check(self) -> int:
-        unacked = await self.alert_manager.search(acknowledged=False)
+        self.access.require_business_write()
+        unacked = await self.alert_manager.search(acknowledged=False, id__in=self.access.alert_ids())
         escalated = 0
-        now = datetime.now()
+        now = business_now()
 
         for alert in unacked:
             rules = ESCALATION_RULES.get(alert.alert_type, [])
@@ -334,13 +369,15 @@ class AlertService(BaseService):
         return escalated
 
     async def acknowledge_alert(self, alert_id: UUID, user_id: str) -> Optional[Alert]:
+        self.access.require_business_write()
+        await self.access.require_alerts([alert_id])
         alert = await self.alert_manager.get_by_id(alert_id)
         if alert:
             await self.alert_manager.update_by_id(
                 alert_id,
                 {
                     "acknowledged": True,
-                    "acknowledged_at": datetime.now(),
+                    "acknowledged_at": business_now(),
                     "acknowledged_by": user_id,
                 },
             )

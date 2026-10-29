@@ -3,6 +3,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from src.api.access import plan_access
 from src.api.schemes import (
     DataResponseSchema,
     ListDataResponseSchema,
@@ -10,6 +11,7 @@ from src.api.schemes import (
     ResponseGroup,
 )
 from src.api.v1.reconciliation.schemes import (
+    ContractorSummary,
     DailySummarySchema,
     ReconciliationFilterOptions,
     ReconciliationFilters,
@@ -20,7 +22,9 @@ from src.api.v1.reconciliation.schemes import (
 from src.services.reconciliation.service import ReconciliationService, get_reconciliation_service
 from src.utils.helpers import catch_all_exceptions, get_responses, pagination_params
 
-reconciliation_router = APIRouter(prefix="/reconciliation", tags=["Reconciliation"])
+reconciliation_router = APIRouter(
+    prefix="/reconciliation", tags=["Reconciliation"], dependencies=[Depends(plan_access)]
+)
 
 
 @reconciliation_router.post("/run", responses=get_responses(ResponseGroup.ALL_ERRORS))
@@ -80,6 +84,9 @@ async def reconciliation_filter_options(
     project_id: UUID | None = Query(None, description="Project, when no single housing is chosen"),
     date_from: date | None = Query(None, description="Start of the reconciled range (inclusive)"),
     date_to: date | None = Query(None, description="End of the reconciled range (inclusive)"),
+    contractor_id: UUID | None = Query(
+        None, description="«Подрядчик» selector; forced to own companies for external users"
+    ),
     service: ReconciliationService = Depends(get_reconciliation_service),
 ) -> DataResponseSchema[ReconciliationFilterOptions]:
     """Values present in the scope, per filterable column.
@@ -92,6 +99,7 @@ async def reconciliation_filter_options(
         project_id=project_id,
         date_from=date_from,
         date_to=date_to,
+        contractor_id=contractor_id,
     )
     return DataResponseSchema[ReconciliationFilterOptions](data=ReconciliationFilterOptions.model_validate(options))
 
@@ -118,18 +126,47 @@ async def list_daily_summaries(
     filter_data = filters.model_dump(exclude_none=True)
     date_from = filter_data.pop("date_from", None)
     date_to = filter_data.pop("date_to", None)
-    filter_data.pop("status", None)
+    summary_filters = {key: filter_data[key] for key in ("housing_id", "housing_id__in") if key in filter_data}
     if date_from:
-        filter_data["date__gte"] = date_from
+        summary_filters["date__gte"] = date_from
     if date_to:
-        filter_data["date__lte"] = date_to
+        summary_filters["date__lte"] = date_to
 
-    items, total = await service.list_summaries(pagination=pagination, order_by=["-date"], **filter_data)
+    items, total = await service.list_summaries(
+        pagination=pagination,
+        order_by=["-date"],
+        project_id=filter_data.get("project_id"),
+        contractor_id=filter_data.get("contractor_id"),
+        **summary_filters,
+    )
     return ListDataResponseSchema[DailySummarySchema].create(
         list_data=items,
         pagination=pagination,
         total=total,
     )
+
+
+@reconciliation_router.get("/contractor-summary", responses=get_responses(ResponseGroup.ALL_ERRORS))
+@catch_all_exceptions
+async def reconciliation_contractor_summary(
+    housing_id: UUID | None = Query(None, description="Housing the summary is scoped to"),
+    project_id: UUID | None = Query(None, description="Project, when no single housing is chosen"),
+    date_from: date | None = Query(None, description="Start of the period (inclusive)"),
+    date_to: date | None = Query(None, description="End of the period (inclusive)"),
+    contractor_id: UUID | None = Query(
+        None, description="«Подрядчик» selector; forced to own companies for external users"
+    ),
+    service: ReconciliationService = Depends(get_reconciliation_service),
+) -> DataResponseSchema[ContractorSummary]:
+    """«Сводка» tab: issued / reported / not reported / unplanned per contractor over the period."""
+    summary = await service.contractor_summary(
+        housing_id=housing_id,
+        project_id=project_id,
+        date_from=date_from,
+        date_to=date_to,
+        contractor_id=contractor_id,
+    )
+    return DataResponseSchema[ContractorSummary](data=ContractorSummary.model_validate(summary))
 
 
 @reconciliation_router.get("/summaries/{summary_id}", responses=get_responses(ResponseGroup.ALL_ERRORS))

@@ -4,6 +4,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from src.api.access import plan_access
 from src.api.schemes import (
     DataResponseSchema,
     ListDataResponseSchema,
@@ -48,7 +49,7 @@ from src.services.workforce.schemas import (
 from src.services.workforce.service import WorkforceService, get_workforce_service
 from src.utils.helpers import catch_all_exceptions, get_responses, pagination_params
 
-workforce_router = APIRouter(prefix="/workforce", tags=["Workforce"])
+workforce_router = APIRouter(prefix="/workforce", tags=["Workforce"], dependencies=[Depends(plan_access)])
 
 
 # ── Analytics ─────────────────────────────────────────────────────────────────
@@ -70,7 +71,7 @@ async def get_project_detail(
     period_month: Optional[date] = Query(None),
     service: WorkforceService = Depends(get_workforce_service),
 ) -> DataResponseSchema[ProjectDetailResponse]:
-    project = await service.wf_project_manager.get_by_id(project_id)
+    project = await service.get_project(project_id)
     if not project:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
     data = await service.calc_project_detail(project, period_month)
@@ -129,10 +130,8 @@ async def list_projects(
 ) -> ListDataResponseSchema[WfProjectOut]:
     filter_data = filters.model_dump(exclude_none=True)
     search_text = filter_data.pop("search", None)
-    items = await service.wf_project_manager.search(
-        search=search_text, order_by=["name"], pagination=pagination, **filter_data
-    )
-    total = await service.wf_project_manager.count(search=search_text, **filter_data)
+    items = await service.search_project(search=search_text, order_by=["name"], pagination=pagination, **filter_data)
+    total = await service.count_project(search=search_text, **filter_data)
     return ListDataResponseSchema[WfProjectOut].create(
         list_data=[WfProjectOut.model_validate(i) for i in items],
         pagination=pagination,
@@ -146,7 +145,7 @@ async def get_project(
     project_id: UUID,
     service: WorkforceService = Depends(get_workforce_service),
 ) -> DataResponseSchema[WfProjectOut]:
-    item = await service.wf_project_manager.get_by_id(project_id)
+    item = await service.get_project(project_id)
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
     return DataResponseSchema[WfProjectOut](data=WfProjectOut.model_validate(item))
@@ -158,7 +157,7 @@ async def create_project(
     body: CreateWfProjectRequest,
     service: WorkforceService = Depends(get_workforce_service),
 ) -> DataResponseSchema[WfProjectOut]:
-    item = await service.wf_project_manager.create(body.model_dump())
+    item = await service.create_project(body.model_dump())
     return DataResponseSchema[WfProjectOut](data=WfProjectOut.model_validate(item))
 
 
@@ -169,7 +168,7 @@ async def update_project(
     body: UpdateWfProjectRequest,
     service: WorkforceService = Depends(get_workforce_service),
 ) -> DataResponseSchema[WfProjectOut]:
-    item = await service.wf_project_manager.update_by_id(project_id, body.model_dump(exclude_none=True))
+    item = await service.update_project(project_id, body.model_dump(exclude_none=True))
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
     return DataResponseSchema[WfProjectOut](data=WfProjectOut.model_validate(item))
@@ -181,7 +180,7 @@ async def delete_project(
     project_id: UUID,
     service: WorkforceService = Depends(get_workforce_service),
 ) -> DataResponseSchema[dict]:
-    await service.wf_project_manager.delete_by_id(project_id)
+    await service.delete_project(project_id)
     return DataResponseSchema[dict](data={"deleted": str(project_id)})
 
 
@@ -191,7 +190,7 @@ async def list_project_objects(
     project_id: UUID,
     service: WorkforceService = Depends(get_workforce_service),
 ) -> ListDataResponseSchema[WfProjectObjectSchema]:
-    items = await service.wf_project_object_manager.search(project_id=project_id)
+    items = await service.search_project_object(project_id=project_id)
     return ListDataResponseSchema[WfProjectObjectSchema].create(
         list_data=[WfProjectObjectSchema.model_validate(i) for i in items],
     )
@@ -210,7 +209,7 @@ async def create_project_object(
 ) -> DataResponseSchema[WfProjectObjectSchema]:
     data = body.model_dump()
     data["project_id"] = project_id
-    item = await service.wf_project_object_manager.create(data)
+    item = await service.create_project_object(data)
     return DataResponseSchema[WfProjectObjectSchema](data=WfProjectObjectSchema.model_validate(item))
 
 
@@ -220,7 +219,7 @@ async def delete_project_object(
     construction_object_id: UUID,
     service: WorkforceService = Depends(get_workforce_service),
 ) -> DataResponseSchema[dict]:
-    await service.wf_project_object_manager.delete_by_id(construction_object_id)
+    await service.delete_project_object(construction_object_id)
     return DataResponseSchema[dict](data={"deleted": str(construction_object_id)})
 
 
@@ -229,7 +228,7 @@ async def delete_project_object(
 async def list_norms(
     service: WorkforceService = Depends(get_workforce_service),
 ) -> ListDataResponseSchema[WfWorkforceNormSchema]:
-    items = await service.wf_workforce_norm_manager.search(order_by=["work_id"])
+    items = await service.search_norm(order_by=["work_id"])
     return ListDataResponseSchema[WfWorkforceNormSchema].create(
         list_data=[WfWorkforceNormSchema.model_validate(i) for i in items],
     )
@@ -241,7 +240,7 @@ async def create_norm(
     body: CreateWfWorkforceNormRequest,
     service: WorkforceService = Depends(get_workforce_service),
 ) -> DataResponseSchema[WfWorkforceNormSchema]:
-    item = await service.wf_workforce_norm_manager.create(body.model_dump())
+    item = await service.create_norm(body.model_dump())
     return DataResponseSchema[WfWorkforceNormSchema](data=WfWorkforceNormSchema.model_validate(item))
 
 
@@ -251,7 +250,7 @@ async def delete_norm(
     norm_id: UUID,
     service: WorkforceService = Depends(get_workforce_service),
 ) -> DataResponseSchema[dict]:
-    await service.wf_workforce_norm_manager.delete_by_id(norm_id)
+    await service.delete_norm(norm_id)
     return DataResponseSchema[dict](data={"deleted": str(norm_id)})
 
 
@@ -271,8 +270,8 @@ async def list_headcount_facts(
         filters["project_id"] = project_id
     if construction_object_id:
         filters["construction_object_id"] = construction_object_id
-    items = await service.wf_headcount_fact_manager.search(order_by=["-fact_date"], pagination=pagination, **filters)
-    total = await service.wf_headcount_fact_manager.count(**filters)
+    items = await service.search_headcount_fact(order_by=["-fact_date"], pagination=pagination, **filters)
+    total = await service.count_headcount_fact(**filters)
     return ListDataResponseSchema[WfHeadcountFactSchema].create(
         list_data=[WfHeadcountFactSchema.model_validate(i) for i in items],
         pagination=pagination,
@@ -286,7 +285,7 @@ async def create_headcount_fact(
     body: CreateWfHeadcountFactRequest,
     service: WorkforceService = Depends(get_workforce_service),
 ) -> DataResponseSchema[WfHeadcountFactSchema]:
-    item = await service.wf_headcount_fact_manager.create(body.model_dump())
+    item = await service.create_headcount_fact(body.model_dump())
     return DataResponseSchema[WfHeadcountFactSchema](data=WfHeadcountFactSchema.model_validate(item))
 
 
@@ -305,7 +304,7 @@ async def list_headcount_plans(
         filters["project_id"] = project_id
     if period_month:
         filters["period_month"] = period_month
-    items = await service.wf_headcount_plan_manager.search(order_by=["-period_month"], **filters)
+    items = await service.search_headcount_plan(order_by=["-period_month"], **filters)
     return ListDataResponseSchema[WfHeadcountPlanSchema].create(
         list_data=[WfHeadcountPlanSchema.model_validate(i) for i in items],
     )
@@ -317,7 +316,7 @@ async def create_headcount_plan(
     body: CreateWfHeadcountPlanRequest,
     service: WorkforceService = Depends(get_workforce_service),
 ) -> DataResponseSchema[WfHeadcountPlanSchema]:
-    item = await service.wf_headcount_plan_manager.create(body.model_dump())
+    item = await service.create_headcount_plan(body.model_dump())
     return DataResponseSchema[WfHeadcountPlanSchema](data=WfHeadcountPlanSchema.model_validate(item))
 
 
@@ -336,7 +335,7 @@ async def list_challenges(
         filters["project_id"] = project_id
     if construction_object_id:
         filters["construction_object_id"] = construction_object_id
-    items = await service.wf_challenge_manager.search(order_by=["-period_month"], **filters)
+    items = await service.search_challenge(order_by=["-period_month"], **filters)
     return ListDataResponseSchema[ChallengeSchema].create(
         list_data=[ChallengeSchema.model_validate(i) for i in items],
     )
@@ -349,15 +348,7 @@ async def create_challenge(
     service: WorkforceService = Depends(get_workforce_service),
 ) -> DataResponseSchema[ChallengeSchema]:
     data = body.model_dump(exclude={"items"})
-    challenge = await service.wf_challenge_manager.create(data, commit=False)
-
-    for item_data in body.items:
-        item_dict = item_data.model_dump()
-        item_dict["challenge_id"] = challenge.id
-        await service.wf_challenge_item_manager.create(item_dict, commit=False)
-
-    await service.wf_challenge_manager.db.commit()
-    await service.wf_challenge_manager.db.refresh(challenge)
+    challenge = await service.create_challenge(data, [item.model_dump() for item in body.items])
 
     return DataResponseSchema[ChallengeSchema](data=ChallengeSchema.model_validate(challenge))
 
@@ -369,7 +360,7 @@ async def update_challenge(
     body: UpdateChallengeRequest,
     service: WorkforceService = Depends(get_workforce_service),
 ) -> DataResponseSchema[ChallengeSchema]:
-    item = await service.wf_challenge_manager.update_by_id(challenge_id, body.model_dump(exclude_none=True))
+    item = await service.update_challenge(challenge_id, body.model_dump(exclude_none=True))
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Challenge not found")
     return DataResponseSchema[ChallengeSchema](data=ChallengeSchema.model_validate(item))
@@ -399,9 +390,9 @@ async def list_violations(
     service: WorkforceService = Depends(get_workforce_service),
 ) -> ListDataResponseSchema[ViolationOut]:
     filter_data = filters.model_dump(exclude_none=True)
-    raw = await service.wf_violation_manager.search(order_by=["-violation_date"], **filter_data)
+    raw = await service.search_violation(order_by=["-violation_date"], **filter_data)
     enriched = await service.enrich_violations(raw)
-    total = await service.wf_violation_manager.count(**filter_data)
+    total = await service.count_violation(**filter_data)
     return ListDataResponseSchema[ViolationOut].create(
         list_data=enriched,
         pagination=pagination,
@@ -415,7 +406,7 @@ async def create_violation(
     body: CreateViolationRequest,
     service: WorkforceService = Depends(get_workforce_service),
 ) -> DataResponseSchema[ViolationOut]:
-    item = await service.wf_violation_manager.create(body.model_dump())
+    item = await service.create_violation(body.model_dump())
     enriched = await service.enrich_violations([item])
     return DataResponseSchema[ViolationOut](data=enriched[0])
 
@@ -427,7 +418,7 @@ async def update_violation(
     body: UpdateViolationRequest,
     service: WorkforceService = Depends(get_workforce_service),
 ) -> DataResponseSchema[ViolationOut]:
-    item = await service.wf_violation_manager.update_by_id(violation_id, body.model_dump(exclude_none=True))
+    item = await service.update_violation(violation_id, body.model_dump(exclude_none=True))
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Violation not found")
     enriched = await service.enrich_violations([item])
@@ -460,7 +451,7 @@ async def auto_escalate_violations(
 async def list_article_bdrs(
     service: WorkforceService = Depends(get_workforce_service),
 ) -> ListDataResponseSchema[ArticleBDRSchema]:
-    items = await service.article_bdr_manager.search(order_by=["code_1c"])
+    items = await service.search_article_bdr(order_by=["code_1c"])
     return ListDataResponseSchema[ArticleBDRSchema].create(
         list_data=[ArticleBDRSchema.model_validate(i) for i in items],
     )
@@ -472,7 +463,7 @@ async def create_article_bdr(
     body: CreateArticleBDRRequest,
     service: WorkforceService = Depends(get_workforce_service),
 ) -> DataResponseSchema[ArticleBDRSchema]:
-    item = await service.article_bdr_manager.create(body.model_dump())
+    item = await service.create_article_bdr(body.model_dump())
     return DataResponseSchema[ArticleBDRSchema](data=ArticleBDRSchema.model_validate(item))
 
 
@@ -483,7 +474,7 @@ async def bulk_create_article_bdrs(
     service: WorkforceService = Depends(get_workforce_service),
 ) -> DataResponseSchema[dict]:
     data = [item.model_dump() for item in body.items]
-    await service.article_bdr_manager.bulk_insert(data, is_commit=True)
+    await service.bulk_create_article_bdrs(data)
     return DataResponseSchema[dict](data={"created": len(data)})
 
 
@@ -493,7 +484,7 @@ async def delete_article_bdr(
     article_bdr_id: UUID,
     service: WorkforceService = Depends(get_workforce_service),
 ) -> DataResponseSchema[dict]:
-    await service.article_bdr_manager.delete_by_id(article_bdr_id)
+    await service.delete_article_bdr(article_bdr_id)
     return DataResponseSchema[dict](data={"deleted": str(article_bdr_id)})
 
 
@@ -509,7 +500,7 @@ async def list_article_mappings(
     filters: dict = {}
     if article_bdr_id:
         filters["article_bdr_id"] = article_bdr_id
-    items = await service.wf_article_mapping_manager.search(**filters)
+    items = await service.search_article_mapping(**filters)
     return ListDataResponseSchema[ArticleMappingSchema].create(
         list_data=[ArticleMappingSchema.model_validate(i) for i in items],
     )
@@ -521,7 +512,7 @@ async def create_article_mapping(
     body: CreateArticleMappingRequest,
     service: WorkforceService = Depends(get_workforce_service),
 ) -> DataResponseSchema[ArticleMappingSchema]:
-    item = await service.wf_article_mapping_manager.create(body.model_dump())
+    item = await service.create_article_mapping(body.model_dump())
     return DataResponseSchema[ArticleMappingSchema](data=ArticleMappingSchema.model_validate(item))
 
 
@@ -531,5 +522,5 @@ async def delete_article_mapping(
     mapping_id: UUID,
     service: WorkforceService = Depends(get_workforce_service),
 ) -> DataResponseSchema[dict]:
-    await service.wf_article_mapping_manager.delete_by_id(mapping_id)
+    await service.delete_article_mapping(mapping_id)
     return DataResponseSchema[dict](data={"deleted": str(mapping_id)})

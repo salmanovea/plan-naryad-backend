@@ -4,7 +4,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Optional
 from uuid import UUID
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, JSON, Numeric, String, func
+from sqlalchemy import Date, DateTime, ForeignKey, Integer, JSON, Numeric, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.dbo.mixins import IDMixin
@@ -80,16 +80,15 @@ class ReconciliationResult(IDMixin, Base):
     pattern: Mapped[Optional[str]] = mapped_column(String(30))
 
     plan_item_id: Mapped[Optional[UUID]] = mapped_column(
-        ForeignKey("plan_items.id", name="fk_reconciliation_results_plan_item_id"),
+        ForeignKey("plan_items.id", name="fk_reconciliation_results_plan_item_id", ondelete="SET NULL"),
         index=True,
     )
     work_fact_id: Mapped[Optional[UUID]] = mapped_column(
-        ForeignKey("work_facts.id", name="fk_reconciliation_results_work_fact_id"),
+        ForeignKey("work_facts.id", name="fk_reconciliation_results_work_fact_id", ondelete="SET NULL"),
         index=True,
     )
 
     fact_submitted_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
-    fact_is_late: Mapped[bool] = mapped_column(Boolean, default=False)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=func.now())
 

@@ -1,7 +1,8 @@
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.authentication import AuthenticationMiddleware
 
@@ -17,6 +18,8 @@ from src.api.v1.task.views import task_router
 from src.api.v1.user.views import user_router
 from src.api.v1.work.views import work_router
 from src.api.v1.workforce.views import workforce_router
+from src.api.access import access_error_response
+from src.utils.exceptions import AccessError
 from src.config.admin.config import init_admin
 from src.config.logger import LoggerProvider
 from src.config.postgres.db_config import async_engine
@@ -46,6 +49,12 @@ app = FastAPI(
 
 # Fail fast: a half-configured auth block would otherwise show up as «everybody has access».
 validate_auth_settings()
+
+
+@app.exception_handler(AccessError)
+async def on_access_error(request: Request, error: AccessError) -> JSONResponse:
+    return access_error_response(error)
+
 
 # CORS is added last, therefore it wraps the authentication middleware — without that a 401
 # would come back without CORS headers and the browser would report a network error instead.

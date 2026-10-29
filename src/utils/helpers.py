@@ -31,6 +31,7 @@ from src.api.schemes import (
     PaginationSchema,
 )
 from src.config.logger import LoggerProvider
+from src.utils.exceptions import AccessError, PlanLocked
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -80,6 +81,9 @@ def catch_all_exceptions(func: Callable[P, Awaitable[R]]) -> Callable[P, Awaitab
         try:
             return await func(*args, **kwargs)
 
+        except AccessError:
+            raise
+
         except RequestValidationError as e:
             schema_cls = RESPONSE_SCHEMAS["400"]["model"]
             return JSONResponse(
@@ -119,6 +123,13 @@ def catch_all_exceptions(func: Callable[P, Awaitable[R]]) -> Callable[P, Awaitab
                     status_code=int(status_code_str),
                     content={"code": status_code_str, "message": message},
                 )
+
+        except PlanLocked as e:
+            schema_cls = RESPONSE_SCHEMAS["400"]["model"]
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content=schema_cls(code="400", message=str(e)).model_dump(),
+            )
 
         except ClientDisconnect:
             log.warning("Client disconnected during request.")

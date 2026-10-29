@@ -2,6 +2,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from src.api.access import plan_access
 from src.api.schemes import (
     DataResponseSchema,
     ListDataResponseSchema,
@@ -32,7 +33,7 @@ from src.api.v1.work.schemes import (
 from src.services.work.service import WorkService, get_work_service
 from src.utils.helpers import catch_all_exceptions, get_responses, pagination_params
 
-work_router = APIRouter(prefix="/works", tags=["Works"])
+work_router = APIRouter(prefix="/works", tags=["Works"], dependencies=[Depends(plan_access)])
 
 
 @work_router.get("/sets", responses=get_responses(ResponseGroup.ALL_ERRORS))
@@ -44,10 +45,10 @@ async def list_work_sets(
 ) -> ListDataResponseSchema[WorkSetSchema]:
     filter_data = filters.model_dump(exclude_none=True)
     search_text = filter_data.pop("search", None)
-    items = await service.work_set_manager.search(
+    items = await service.search_work_set(
         search=search_text, order_by=["order", "name"], pagination=pagination, **filter_data
     )
-    total = await service.work_set_manager.count(search=search_text, **filter_data)
+    total = await service.count_work_set(search=search_text, **filter_data)
     return ListDataResponseSchema[WorkSetSchema].create(
         list_data=[WorkSetSchema.model_validate(i) for i in items],
         pagination=pagination,
@@ -61,7 +62,7 @@ async def get_work_set(
     work_set_id: UUID,
     service: WorkService = Depends(get_work_service),
 ) -> DataResponseSchema[WorkSetSchema]:
-    item = await service.work_set_manager.get_by_id(work_set_id)
+    item = await service.get_work_set(work_set_id)
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Work set not found")
     return DataResponseSchema[WorkSetSchema](data=WorkSetSchema.model_validate(item))
@@ -73,7 +74,7 @@ async def create_work_set(
     body: CreateWorkSetRequest,
     service: WorkService = Depends(get_work_service),
 ) -> DataResponseSchema[WorkSetSchema]:
-    item = await service.work_set_manager.create(body.model_dump())
+    item = await service.create_work_set(body.model_dump())
     return DataResponseSchema[WorkSetSchema](data=WorkSetSchema.model_validate(item))
 
 
@@ -84,7 +85,7 @@ async def update_work_set(
     body: UpdateWorkSetRequest,
     service: WorkService = Depends(get_work_service),
 ) -> DataResponseSchema[WorkSetSchema]:
-    item = await service.work_set_manager.update_by_id(work_set_id, body.model_dump(exclude_none=True))
+    item = await service.update_work_set(work_set_id, body.model_dump(exclude_none=True))
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Work set not found")
     return DataResponseSchema[WorkSetSchema](data=WorkSetSchema.model_validate(item))
@@ -96,7 +97,7 @@ async def delete_work_set(
     work_set_id: UUID,
     service: WorkService = Depends(get_work_service),
 ) -> DataResponseSchema[dict]:
-    await service.work_set_manager.delete_by_id(work_set_id)
+    await service.delete_work_set(work_set_id)
     return DataResponseSchema[dict](data={"deleted": str(work_set_id)})
 
 
@@ -109,10 +110,10 @@ async def list_work_groups(
 ) -> ListDataResponseSchema[WorkGroupSchema]:
     filter_data = filters.model_dump(exclude_none=True)
     search_text = filter_data.pop("search", None)
-    items = await service.work_group_manager.search(
+    items = await service.search_work_group(
         search=search_text, order_by=["order", "name"], pagination=pagination, **filter_data
     )
-    total = await service.work_group_manager.count(search=search_text, **filter_data)
+    total = await service.count_work_group(search=search_text, **filter_data)
     return ListDataResponseSchema[WorkGroupSchema].create(
         list_data=[WorkGroupSchema.model_validate(i) for i in items],
         pagination=pagination,
@@ -126,7 +127,7 @@ async def get_work_group(
     work_group_id: UUID,
     service: WorkService = Depends(get_work_service),
 ) -> DataResponseSchema[WorkGroupSchema]:
-    item = await service.work_group_manager.get_by_id(work_group_id)
+    item = await service.get_work_group(work_group_id)
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Work group not found")
     return DataResponseSchema[WorkGroupSchema](data=WorkGroupSchema.model_validate(item))
@@ -138,7 +139,7 @@ async def create_work_group(
     body: CreateWorkGroupRequest,
     service: WorkService = Depends(get_work_service),
 ) -> DataResponseSchema[WorkGroupSchema]:
-    item = await service.work_group_manager.create(body.model_dump())
+    item = await service.create_work_group(body.model_dump())
     return DataResponseSchema[WorkGroupSchema](data=WorkGroupSchema.model_validate(item))
 
 
@@ -149,7 +150,7 @@ async def update_work_group(
     body: UpdateWorkGroupRequest,
     service: WorkService = Depends(get_work_service),
 ) -> DataResponseSchema[WorkGroupSchema]:
-    item = await service.work_group_manager.update_by_id(work_group_id, body.model_dump(exclude_none=True))
+    item = await service.update_work_group(work_group_id, body.model_dump(exclude_none=True))
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Work group not found")
     return DataResponseSchema[WorkGroupSchema](data=WorkGroupSchema.model_validate(item))
@@ -161,7 +162,7 @@ async def delete_work_group(
     work_group_id: UUID,
     service: WorkService = Depends(get_work_service),
 ) -> DataResponseSchema[dict]:
-    await service.work_group_manager.delete_by_id(work_group_id)
+    await service.delete_work_group(work_group_id)
     return DataResponseSchema[dict](data={"deleted": str(work_group_id)})
 
 
@@ -174,10 +175,10 @@ async def list_work_types(
 ) -> ListDataResponseSchema[WorkTypeSchema]:
     filter_data = filters.model_dump(exclude_none=True)
     search_text = filter_data.pop("search", None)
-    items = await service.work_type_manager.search(
+    items = await service.search_work_type(
         search=search_text, order_by=["order", "name"], pagination=pagination, **filter_data
     )
-    total = await service.work_type_manager.count(search=search_text, **filter_data)
+    total = await service.count_work_type(search=search_text, **filter_data)
     return ListDataResponseSchema[WorkTypeSchema].create(
         list_data=[WorkTypeSchema.model_validate(i) for i in items],
         pagination=pagination,
@@ -191,7 +192,7 @@ async def get_work_type(
     work_type_id: UUID,
     service: WorkService = Depends(get_work_service),
 ) -> DataResponseSchema[WorkTypeSchema]:
-    item = await service.work_type_manager.get_by_id(work_type_id)
+    item = await service.get_work_type(work_type_id)
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Work type not found")
     return DataResponseSchema[WorkTypeSchema](data=WorkTypeSchema.model_validate(item))
@@ -203,7 +204,7 @@ async def create_work_type(
     body: CreateWorkTypeRequest,
     service: WorkService = Depends(get_work_service),
 ) -> DataResponseSchema[WorkTypeSchema]:
-    item = await service.work_type_manager.create(body.model_dump())
+    item = await service.create_work_type(body.model_dump())
     return DataResponseSchema[WorkTypeSchema](data=WorkTypeSchema.model_validate(item))
 
 
@@ -214,7 +215,7 @@ async def update_work_type(
     body: UpdateWorkTypeRequest,
     service: WorkService = Depends(get_work_service),
 ) -> DataResponseSchema[WorkTypeSchema]:
-    item = await service.work_type_manager.update_by_id(work_type_id, body.model_dump(exclude_none=True))
+    item = await service.update_work_type(work_type_id, body.model_dump(exclude_none=True))
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Work type not found")
     return DataResponseSchema[WorkTypeSchema](data=WorkTypeSchema.model_validate(item))
@@ -226,7 +227,7 @@ async def delete_work_type(
     work_type_id: UUID,
     service: WorkService = Depends(get_work_service),
 ) -> DataResponseSchema[dict]:
-    await service.work_type_manager.delete_by_id(work_type_id)
+    await service.delete_work_type(work_type_id)
     return DataResponseSchema[dict](data={"deleted": str(work_type_id)})
 
 
@@ -239,12 +240,11 @@ async def get_tech_sequence(
     housing_id: UUID,
     service: WorkService = Depends(get_work_service),
 ) -> DataResponseSchema[TechSequenceSchema]:
-    housing = await service.housing_manager.get_by_id(housing_id)
+    housing = await service.get_housing(housing_id)
     if not housing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Housing not found")
 
-    items = await service.tech_sequence_manager.search(
-        query=service.tech_sequence_manager.get_enriched_query(),
+    items = await service.search_tech_sequence(
         housing_id=housing_id,
         order_by=["order"],
     )
@@ -263,7 +263,7 @@ async def create_tech_sequence_item(
     body: CreateTechSequenceItemRequest,
     service: WorkService = Depends(get_work_service),
 ) -> DataResponseSchema[TechSequenceItemSchema]:
-    item = await service.tech_sequence_manager.create(body.model_dump())
+    item = await service.create_tech_sequence(body.model_dump())
     return DataResponseSchema[TechSequenceItemSchema](data=TechSequenceItemSchema.model_validate(item))
 
 
@@ -273,7 +273,7 @@ async def delete_tech_sequence_item(
     item_id: UUID,
     service: WorkService = Depends(get_work_service),
 ) -> DataResponseSchema[dict]:
-    await service.tech_sequence_manager.delete_by_id(item_id)
+    await service.delete_tech_sequence(item_id)
     return DataResponseSchema[dict](data={"deleted": str(item_id)})
 
 
@@ -286,10 +286,8 @@ async def list_works(
 ) -> ListDataResponseSchema[WorkSchema]:
     filter_data = filters.model_dump(exclude_none=True)
     search_text = filter_data.pop("search", None)
-    items = await service.work_manager.search(
-        search=search_text, order_by=["name"], pagination=pagination, **filter_data
-    )
-    total = await service.work_manager.count(search=search_text, **filter_data)
+    items = await service.search_work(search=search_text, order_by=["name"], pagination=pagination, **filter_data)
+    total = await service.count_work(search=search_text, **filter_data)
     return ListDataResponseSchema[WorkSchema].create(
         list_data=[WorkSchema.model_validate(i) for i in items],
         pagination=pagination,
@@ -303,7 +301,7 @@ async def create_work(
     body: CreateWorkRequest,
     service: WorkService = Depends(get_work_service),
 ) -> DataResponseSchema[WorkSchema]:
-    item = await service.work_manager.create(body.model_dump())
+    item = await service.create_work(body.model_dump())
     return DataResponseSchema[WorkSchema](data=WorkSchema.model_validate(item))
 
 
@@ -313,7 +311,7 @@ async def get_work(
     work_id: UUID,
     service: WorkService = Depends(get_work_service),
 ) -> DataResponseSchema[WorkSchema]:
-    item = await service.work_manager.get_by_id(work_id)
+    item = await service.get_work(work_id)
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Work not found")
     return DataResponseSchema[WorkSchema](data=WorkSchema.model_validate(item))
@@ -326,7 +324,7 @@ async def update_work(
     body: UpdateWorkRequest,
     service: WorkService = Depends(get_work_service),
 ) -> DataResponseSchema[WorkSchema]:
-    item = await service.work_manager.update_by_id(work_id, body.model_dump(exclude_none=True))
+    item = await service.update_work(work_id, body.model_dump(exclude_none=True))
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Work not found")
     return DataResponseSchema[WorkSchema](data=WorkSchema.model_validate(item))
@@ -338,5 +336,5 @@ async def delete_work(
     work_id: UUID,
     service: WorkService = Depends(get_work_service),
 ) -> DataResponseSchema[dict]:
-    await service.work_manager.delete_by_id(work_id)
+    await service.delete_work(work_id)
     return DataResponseSchema[dict](data={"deleted": str(work_id)})

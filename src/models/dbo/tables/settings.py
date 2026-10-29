@@ -1,11 +1,11 @@
 """Operational settings and the action journal."""
 
-from datetime import datetime
+from datetime import datetime, time
 from enum import Enum
 from typing import TYPE_CHECKING, Optional
 from uuid import UUID
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Index, Integer, String, Uuid, func
+from sqlalchemy import JSON, DateTime, ForeignKey, Index, Integer, String, Time, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.dbo.mixins import IDMixin
@@ -13,43 +13,41 @@ from src.models.dbo.base_model import Base
 
 if TYPE_CHECKING:
     from src.models.dbo.tables.contractor import Contractor
-    from src.models.dbo.tables.work import Work
 
 
-class ContractorFloorLimit(IDMixin, Base):
-    """How many floors of one work may land on one contractor in a single day plan.
+class ContractorPositionLimit(IDMixin, Base):
+    """Cap on one contractor's positions in a single day plan (Р8; the ТЗ limit is per
+    contractor). No row means `DEFAULT_FLOOR_LIMIT` from settings applies to everyone."""
 
-    Resolution cascade, most specific first:
-      1. row matching both contractor and work
-      2. row for the work with `contractor_id IS NULL`
-      3. `DEFAULT_FLOOR_LIMIT` from settings
+    __tablename__ = "contractor_position_limits"
+
+    contractor_id: Mapped[UUID] = mapped_column(
+        ForeignKey("contractors.id", name="fk_contractor_position_limits_contractor_id"),
+        nullable=False,
+    )
+    positions_limit: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    contractor: Mapped["Contractor"] = relationship()  # type: ignore[name-defined]
+
+    __table_args__ = (Index("uq_contractor_position_limits_contractor", "contractor_id", unique=True),)
+
+
+DEFAULT_TRANSFER_TIME = time(10, 0)
+NIGHTLY_PLAN_TIME = time(3, 0)
+
+
+class PlanSettings(IDMixin, Base):
+    """System-wide plan-naryad settings: a single row, edited in the admin.
+
+    `transfer_time` is when a day's positions go to the contractors, on that same day in
+    business time. From then on the day is closed — no generation, no new positions, no
+    confirming or deleting. It has to stay after `NIGHTLY_PLAN_TIME` (Raport's 03:00 job):
+    the night run builds today's plan only while today is still open.
     """
 
-    __tablename__ = "contractor_floor_limits"
+    __tablename__ = "plan_settings"
 
-    contractor_id: Mapped[Optional[UUID]] = mapped_column(
-        ForeignKey("contractors.id", name="fk_contractor_floor_limits_contractor_id"),
-        index=True,
-    )
-    work_id: Mapped[UUID] = mapped_column(
-        ForeignKey("works.id", name="fk_contractor_floor_limits_work_id"),
-        nullable=False,
-        index=True,
-    )
-    floors_limit: Mapped[int] = mapped_column(Integer, nullable=False)
-
-    contractor: Mapped[Optional["Contractor"]] = relationship()  # type: ignore[name-defined]
-    work: Mapped["Work"] = relationship()  # type: ignore[name-defined]
-
-    __table_args__ = (
-        Index(
-            "uq_contractor_floor_limits_key",
-            "contractor_id",
-            "work_id",
-            unique=True,
-            postgresql_nulls_not_distinct=True,
-        ),
-    )
+    transfer_time: Mapped[time] = mapped_column(Time, nullable=False, default=DEFAULT_TRANSFER_TIME)
 
 
 class ActionType(str, Enum):

@@ -9,12 +9,13 @@ from datetime import date
 
 from fastapi import APIRouter, Depends, Query
 
+from src.api.access import plan_access
 from src.api.schemes import DataResponseSchema, ResponseGroup
 from src.services.common import current_actor
 from src.services.task import TaskService, get_task_service
 from src.utils.helpers import catch_all_exceptions, get_responses
 
-task_router = APIRouter(prefix="/tasks", tags=["Scheduled jobs"])
+task_router = APIRouter(prefix="/tasks", tags=["Scheduled jobs"], dependencies=[Depends(plan_access)])
 
 
 @task_router.post(
@@ -38,14 +39,16 @@ async def nightly_plan(
 
 @task_router.post(
     "/transfer",
-    summary="Cutoff job: hand the day's positions to the contractors",
-    description="Called by Raport's scheduler at the transfer cutoff. Moves both draft and "
-    "confirmed positions to `transferred`, as the spec requires. Idempotent.",
+    summary="Transfer job: hand closed days' positions to the contractors",
+    description="Called by Raport's scheduler every few minutes. Without a date, moves every draft "
+    "of every day whose transfer time (admin settings) has passed to `transferred`, confirmed or "
+    "not, as the spec requires; missed runs are caught up. With a date, hands that day over at "
+    "once. Idempotent.",
     responses=get_responses(ResponseGroup.ALL_ERRORS),
 )
 @catch_all_exceptions
 async def transfer(
-    target_date: date | None = Query(None, alias="date", description="Defaults to today"),
+    target_date: date | None = Query(None, alias="date", description="One day to hand over now; omit to sweep"),
     service: TaskService = Depends(get_task_service),
 ) -> DataResponseSchema[dict]:
     result = await service.run_transfer(target_date=target_date)

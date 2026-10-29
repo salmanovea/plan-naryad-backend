@@ -37,11 +37,12 @@ from src.api.v1.sync.schemes import (
 )
 from src.config.logger import LoggerProvider
 from src.config.postgres.db_config import get_session
-from src.external.report.api import ReportApi
+from src.external.report.api import STABLE_ORDER, ReportApi
 from src.models import managers
 from src.models.dbo.tables.work import DependencyType
 from src.models.managers.common import BaseManager
-from src.services.common import BaseService
+from src.utils.business_time import business_today, business_tz
+from src.services.common import BaseService, end_transaction
 from src.services.contractor_works import ContractorWorksService, HousingAssignments
 
 log = LoggerProvider().get_logger(__name__)
@@ -76,16 +77,24 @@ def _dedupe_by(rows: list[dict], key: str) -> list[dict]:
 
 
 def _as_date(value: Any) -> date | None:
-    """Raport sends an ISO datetime; the column is a plain date and asyncpg wants a date."""
+    """Raport sends an ISO datetime; the column is a plain date and asyncpg wants a date.
+
+    Raport normalizes datetimes to UTC on output, so the calendar date must be taken in
+    *local* time (TZ=Europe/Moscow in the containers): a fact entered 28.08 00:30 MSK
+    arrives as `…-27T21:30:00Z` and would otherwise land on the 27th (DEV-6858, item 11).
+    """
     if not value:
         return None
     try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).date()
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except ValueError:
         try:
             return date.fromisoformat(str(value)[:10])
         except ValueError:
             return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(business_tz())
+    return parsed.date()
 
 
 def _nested_id(payload: Any, *keys: str) -> str | None:
@@ -273,7 +282,7 @@ class SyncReportService(BaseService):
                     {
                         "raport_id": str(f["id"]),
                         "section_id": local_s_id,
-                        "floor_number": f.get("number") or f.get("sort_order") or 0,
+                        "floor_number": f.get("sort_order") or 0,
                         "name": _trim(f.get("name"), 100),
                     }
                 )
@@ -500,32 +509,51 @@ class SyncReportService(BaseService):
         Facts are entered in Raport only (spec: creating them here is out of scope), so this
         is a one-way mirror keyed by `raport_id` (Raport's `work_fact.id`).
 
-        Raport leaves `contractor` empty on virtually every fact — 0 of 56 365 on the
-        reference housing — so the contractor is resolved from the cell's assignment
-        (`/contractor-works`), which covers 99.5% of cells. Facts on a cell shared by several
-        contractors are stored without one rather than attributed by guesswork.
+        The contractor is the one of the fact's `work_cell_contractor`, which Raport returns as
+        `contractor`. Since DEV-6485 (15 Sep 2026) Raport refuses a fact without a
+        `work_cell_contractor`, so only older facts fall back to the cell's assignment
+        (`/contractor-works`) — and only when the cell has a single contractor. The rest are
+        stored without one rather than attributed by guesswork.
 
         Without a window the default is yesterday and today, which is what the nightly run
         needs; a full re-pull is done by passing an explicit range.
+
+        A fact deleted in Raport disappears from the mirror too, but only after Raport was read
+        to the last page: a partial answer would make every fact on the unread pages look deleted.
         """
+        empty = {"work_facts": 0, "skipped": 0, "without_contractor": 0, "removed": 0, "complete": True}
         local = await self.housing_manager.search(raport_id=housing_raport_id)
         if not local:
-            return {"work_facts": 0, "skipped": 0, "without_contractor": 0}
+            return empty
         housing_id = local[0].id
 
         if date_from is None and date_to is None:
-            date_to = date.today()
+            date_to = business_today()
             date_from = date_to - timedelta(days=1)
 
-        rows_src = await self._fetch_work_facts(housing_raport_id, date_from, date_to)
+        await end_transaction(self.db)
+        rows_src, complete = await self._fetch_work_facts(housing_raport_id, date_from, date_to)
+        removed = 0
+        if complete:
+            removed = await self._remove_vanished_facts(
+                housing_id, date_from, date_to, {str(src["id"]) for src in rows_src}
+            )
         if not rows_src:
-            return {"work_facts": 0, "skipped": 0, "without_contractor": 0}
+            await self.db.commit()
+            return {**empty, "removed": removed, "complete": complete}
 
         section_map = await self._reverse_raport_map(self.section_manager, housing_id=housing_id)
         floor_map = await self._floor_raport_map(housing_id)
         work_map = await self._resolve_parents(self.work_manager, (_nested_id(r, "work", "id") or "" for r in rows_src))
+        contractor_map = await self._resolve_parents(
+            self.contractor_manager, (_nested_id(r, "contractor", "id") or "" for r in rows_src)
+        )
 
-        assignments = await ContractorWorksService(self.db, report=self.report).get_housing_assignments(housing_id)
+        assignments = (
+            await ContractorWorksService(self.db, report=self.report).get_housing_assignments(housing_id)
+            if any(not _nested_id(r, "contractor", "id") for r in rows_src)
+            else HousingAssignments()
+        )
 
         rows: list[dict] = []
         skipped = 0
@@ -538,7 +566,9 @@ class SyncReportService(BaseService):
                 skipped += 1
                 continue
 
-            contractor_id = await self._resolve_fact_contractor(src, section_id, floor_id, work_id, assignments)
+            contractor_id = self._resolve_fact_contractor(
+                src, contractor_map, assignments, section_id=section_id, floor_id=floor_id, work_id=work_id
+            )
             if contractor_id is None:
                 without_contractor += 1
 
@@ -584,23 +614,53 @@ class SyncReportService(BaseService):
                 ],
                 batch_size=self._FACT_BATCH_SIZE,
             )
+        else:
+            await self.db.commit()
 
-        result = {"work_facts": len(rows), "skipped": skipped, "without_contractor": without_contractor}
+        result = {
+            "work_facts": len(rows),
+            "skipped": skipped,
+            "without_contractor": without_contractor,
+            "removed": removed,
+            "complete": complete,
+        }
         log.info("sync_work_facts: housing %s (%s..%s) — %s", housing_raport_id, date_from, date_to, result)
         return result
+
+    async def _remove_vanished_facts(
+        self,
+        housing_id: UUID,
+        date_from: date | None,
+        date_to: date | None,
+        present_raport_ids: set[str],
+    ) -> int:
+        """Delete mirrored facts of the window that Raport no longer returns; the count removed.
+
+        Rows without a `raport_id` were not mirrored from Raport and are left alone.
+        """
+        stored = await self.work_fact_manager.search(
+            housing_id=housing_id, work_date__gte=date_from, work_date__lte=date_to
+        )
+        vanished = [f.id for f in stored if f.raport_id and f.raport_id not in present_raport_ids]
+        await self.work_fact_manager.bulk_delete(vanished)
+        return len(vanished)
 
     async def _fetch_work_facts(
         self,
         housing_raport_id: str,
         date_from: date | None,
         date_to: date | None,
-    ) -> list[dict]:
-        """Walk every page of `/work-facts` for a housing and window."""
-        params: dict[str, Any] = {"housing_id": housing_raport_id}
+    ) -> tuple[list[dict], bool]:
+        """Walk every page of `/work-facts` for a housing and window; (rows, read to the end).
+
+        Raport compares `work_date` with the bound as a Moscow datetime, so the upper bound
+        is the last second of `date_to` — the whole day, not only its midnight.
+        """
+        params: dict[str, Any] = {"housing_id": housing_raport_id, "order_by": STABLE_ORDER}
         if date_from:
             params["work_date__gte"] = str(date_from)
         if date_to:
-            params["work_date__lte"] = str(date_to)
+            params["work_date__lte"] = f"{date_to}T23:59:59"
 
         rows: list[dict] = []
         page = 1
@@ -609,29 +669,33 @@ class SyncReportService(BaseService):
                 response = await self.report.list_work_facts(page=page, per_page=self._FACT_PER_PAGE, **params)
             except Exception as err:
                 log.error("sync_work_facts: read failed on page %d: %s", page, err)
-                break
+                return rows, False
             items = (response or {}).get("data") or []
             rows.extend(items)
             next_page = ((response or {}).get("pagination") or {}).get("next_page")
             if not next_page or not items:
-                break
+                return rows, True
             page = next_page
-        return rows
 
     @staticmethod
-    async def _resolve_fact_contractor(
+    def _resolve_fact_contractor(
         src: dict,
+        contractor_map: dict[str, UUID],
+        assignments: HousingAssignments,
+        *,
         section_id: UUID,
         floor_id: UUID,
         work_id: UUID,
-        assignments: "HousingAssignments",
     ) -> UUID | None:
-        """Raport's own contractor first, the cell's sole assignee second, else nothing."""
+        """The contractor of the fact's `work_cell_contractor`, else the cell's sole assignee, else nothing.
+
+        A contractor Raport names but we have not synced yields nothing: the cell's assignee
+        may be someone else, and a fact credited to the wrong contractor breaks the
+        plan/fact match in reconciliation.
+        """
         raport_contractor = _nested_id(src, "contractor", "id")
         if raport_contractor:
-            # Raport named the contractor itself; trust it when it resolves locally.
-            for candidate in assignments.contractors_for(section_id, floor_id, work_id):
-                return candidate
+            return contractor_map.get(raport_contractor)
         return assignments.single_contractor_for(section_id, floor_id, work_id)
 
     async def _reverse_raport_map(self, manager: BaseManager, **filters: Any) -> dict[str, UUID]:
@@ -703,9 +767,12 @@ class SyncReportService(BaseService):
         """Return (plan, source_kind) for a housing or one of its sections.
 
         Raport builds calendar plans at both scopes, so the lookup is scoped too: with
-        `section_raport_id` it asks for that section's plan and gives up if there is none
-        (the housing-wide plan already covers the section). Without it, it falls back to
-        the default plan-template.
+        `section_raport_id` it asks for that section's plan; without it, the housing-wide
+        plan. No calendar plan means no sequence — deliberately no fallback to the default
+        plan-template (DEV-6936): a plan-naryad must never be generated for a housing
+        nobody planned, and the КП tasks already carry `line_number`,
+        `floor_sorting_direction` and `planning_type` themselves (copied from the template
+        when the КП is created), so the template adds nothing.
 
         `plan` carries `data` (tasks) and `links` (predecessor edges).
         """
@@ -716,16 +783,7 @@ class SyncReportService(BaseService):
         if check.get("is_exists") and check.get("data"):
             cp = await self.report.get_calendar_plan(str(check["data"][0]["id"]))
             return (cp.get("plan") or {}, "calendar")
-
-        if section_raport_id:
-            return ({}, None)
-
-        templates = await self.report.list_plan_templates(is_default="true", per_page=1)
-        tdata = templates.get("data") or []
-        if not tdata:
-            return ({}, None)
-        tpl = await self.report.get_plan_template_data(str(tdata[0]["id"]))
-        return (tpl.get("plan") or {}, "template")
+        return ({}, None)
 
     async def sync_tech_sequence(self, housing_raport_id: str) -> dict[str, int]:
         """Sync the technological sequences of one housing from Raport.
@@ -754,9 +812,7 @@ class SyncReportService(BaseService):
         for section in await self.section_manager.search(housing_id=housing_id):
             if not section.raport_id:
                 continue
-            section_plan, kind = await self._load_plan_structure(housing_raport_id, section.raport_id)
-            if kind is None:
-                continue
+            section_plan, _ = await self._load_plan_structure(housing_raport_id, section.raport_id)
             await self._store_sequence_scope(section_plan, housing_id, section.id, totals)
 
         return totals

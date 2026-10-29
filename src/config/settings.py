@@ -29,12 +29,13 @@ class AppConfig(BaseSettings):
 
     # Business logic limits
     max_items_per_contractor: int = 10
-    # Floors of one work a single contractor may get in one day plan when
-    # `contractor_floor_limits` holds no row for them (decision Р8).
+    # Positions a single contractor may get in one day plan when
+    # `contractor_position_limits` holds no row for them (decision Р8; the ТЗ
+    # limit is per contractor). The env name keeps its historical spelling.
     default_floor_limit: int = 4
-    # Until this hour (local time) an unscheduled generation targets today; later it
-    # targets tomorrow, because today's plan has already gone to the contractors (Р3).
-    plan_transfer_cutoff_hour: int = 10
+    # The business timezone: fact dates and the transfer time are computed in it regardless
+    # of the container's TZ.
+    app_timezone: str = "Europe/Moscow"
 
     # Keycloak — connection params of the Raport client (this service has no client of its own)
     keycloak_server_url: Optional[str] = None

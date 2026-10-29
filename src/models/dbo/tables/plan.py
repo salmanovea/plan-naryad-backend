@@ -25,10 +25,14 @@ class PlanSource(str, Enum):
 
 
 class PlanStatus(str, Enum):
-    """`CANCELLED` is retired — items are deleted outright."""
+    """Draft until the transfer time, then handed to the contractor.
+
+    Confirmation is not a status: it is the `rs_confirmed` mark on a draft, and the transfer
+    takes drafts whether they carry it or not. `CANCELLED` is retired — items are deleted
+    outright.
+    """
 
     DRAFT = "draft"
-    CONFIRMED = "confirmed"
     TRANSFERRED = "transferred"
     CANCELLED = "cancelled_by_rs"
 
@@ -85,6 +89,9 @@ class PlanItem(IDMixin, Base):
 
     source: Mapped[str] = mapped_column(String(20), default=PlanSource.AUTO)
     status: Mapped[str] = mapped_column(String(20), default=PlanStatus.DRAFT)
+
+    def __str__(self) -> str:
+        return f"{self.date} · {self.status}"
 
     housing: Mapped["Housing"] = relationship()  # type: ignore[name-defined]
     section: Mapped["Section"] = relationship()  # type: ignore[name-defined]

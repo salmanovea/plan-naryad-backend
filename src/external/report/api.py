@@ -1,9 +1,10 @@
 """
 HTTP client for the Raport reference APIs.
 
-`ReportApi` owns everything related to talking to Raport: it obtains a fresh
-Keycloak Bearer token via `get_report_access_token()` on every call (no caching),
-issues the request, and paginates list endpoints via `list_all`.
+`ReportApi` owns everything related to talking to Raport: it takes the Keycloak Bearer
+token from `get_report_access_token()` (cached for its lifetime, see `auth.py`), issues
+the request — once more with a fresh token if Raport answers 401 — and paginates list
+endpoints via `list_all`.
 
 Method names follow the convention `<verb>_<entity>[_<by_parent>]`:
   - list_projects()                     → GET /api/v1/projects
@@ -22,9 +23,11 @@ import httpx
 
 from src.config.logger import LoggerProvider
 from src.config.settings import app_config
-from src.external.report.auth import get_report_access_token
+from src.external.report.auth import clear_token_cache, get_report_access_token
 
 log = LoggerProvider().get_logger(__name__)
+
+STABLE_ORDER = "id"
 
 
 class ReportApiError(RuntimeError):
@@ -53,21 +56,26 @@ class ReportApi:
         path: str,
         params: dict[str, Any] | None = None,
     ) -> Any:
-        """Execute a single HTTP request with a fresh Bearer token."""
-        token = await get_report_access_token()
+        """Execute a single HTTP request; a 401 is retried once with a fresh token."""
         clean_params = {k: v for k, v in (params or {}).items() if v is not None}
         url = f"{self.base_url}{path}"
 
-        async with httpx.AsyncClient(
-            timeout=self.timeout,
-            verify=app_config.keycloak_verify_ssl,
-        ) as http:
-            response = await http.request(
-                method,
-                url,
-                params=clean_params,
-                headers={"Authorization": f"Bearer {token}"},
-            )
+        for attempt in (1, 2):
+            token = await get_report_access_token()
+            async with httpx.AsyncClient(
+                timeout=self.timeout,
+                verify=app_config.keycloak_verify_ssl,
+            ) as http:
+                response = await http.request(
+                    method,
+                    url,
+                    params=clean_params,
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+            if response.status_code != 401 or attempt == 2:
+                break
+            log.warning(f"Raport API {method} {path} answered 401 — retrying with a fresh token")
+            clear_token_cache()
 
         if response.status_code >= 400:
             log.error(f"Raport API {method} {path} failed: status={response.status_code} body={response.text[:500]}")
@@ -81,8 +89,10 @@ class ReportApi:
         Stops when the envelope's `pagination.next_page` is null/absent (or a page
         comes back empty). The Raport pagination envelope uses
         `{total_items, page, items_per_page, next_page, prev_page, total_pages}`.
+        Pages are ordered by `STABLE_ORDER` unless the caller passes its own `order_by`.
         """
         method = getattr(self, method_name)
+        kwargs.setdefault("order_by", STABLE_ORDER)
         page, results = 1, []
         while True:
             resp = await method(page=page, per_page=self._PER_PAGE, **kwargs)
@@ -268,8 +278,8 @@ class ReportApi:
 
         Since the Raport change of 17 Aug 2026 each row carries `percent` — the payload that
         actually matters, because 99.2% of facts have `volume = 0` — plus `contractor` and
-        `work_cell_contractor_id`. Those two come from `work_cell_contractor` and are empty
-        on most rows, so the contractor is resolved locally from the cell's assignment.
+        `work_cell_contractor_id`. Both come from `work_cell_contractor`, mandatory on new facts
+        since DEV-6485 (15 Sep 2026); only older facts lack them.
         """
         return await self._request("GET", "/api/v1/work-facts", params=params)
 

@@ -32,7 +32,7 @@ CELL = UUID("cccc0000-0000-0000-0000-00000000dd02")
 TARGET = date(2026, 7, 1)
 
 
-async def _position(session, *, status: str, section_id: UUID = SECTION_1) -> UUID:
+async def _position(session, *, status: str, section_id: UUID = SECTION_1, rs_confirmed: bool = False) -> UUID:
     item = await managers.PlanItemManager(session).create(
         {
             "date": TARGET,
@@ -45,6 +45,7 @@ async def _position(session, *, status: str, section_id: UUID = SECTION_1) -> UU
             "work_cell_id": CELL,
             "source": "auto",
             "status": status,
+            "rs_confirmed": rs_confirmed,
         }
     )
     return item.id
@@ -78,10 +79,10 @@ async def test_transferred_position_is_returned_in_raport_ids(async_test_session
 
 
 async def test_draft_and_confirmed_are_not_exposed(async_test_session):
-    """The toggle follows «Передано подрядчику» — nothing earlier counts."""
+    """The toggle follows «Передано подрядчику» — a draft does not count, confirmed or not."""
     await _clear(async_test_session)
     await _position(async_test_session, status=PlanStatus.DRAFT.value)
-    await _position(async_test_session, status=PlanStatus.CONFIRMED.value, section_id=SECTION_2)
+    await _position(async_test_session, status=PlanStatus.DRAFT.value, section_id=SECTION_2, rs_confirmed=True)
     service = AutogenerationService(async_test_session)
 
     rows = await service.daily_assignment(RAPORT_HOUSING, TARGET)

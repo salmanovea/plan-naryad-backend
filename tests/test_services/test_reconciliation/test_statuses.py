@@ -93,6 +93,8 @@ def _service(session, cells: dict) -> ReconciliationService:
     service = ReconciliationService(session)
     service.report_cells = MagicMock()
     service.report_cells.get_housing_slice = AsyncMock(return_value=HousingSlice(cells=cells))
+    service.sync = MagicMock()
+    service.sync.sync_work_facts = AsyncMock(return_value={"work_facts": 0, "removed": 0, "complete": True})
     return service
 
 
@@ -284,3 +286,26 @@ async def test_summary_counts_and_rates(async_test_session):
     # One of two planned rows finished → 0.5; mean percent (100 + 50) / 200 → 0.75.
     assert summary.completion_rate == Decimal("0.5000")
     assert summary.weighted_completion == Decimal("0.7500")
+    # Per-contractor stats carry what a «Подрядчик» selection needs to rebuild the rates.
+    stats = summary.contractor_details[str(CONTRACTOR)]
+    assert (stats["total"], stats["done_full"], stats["unplanned"]) == (2, 1, 0)
+    assert (Decimal(stats["fact_percent_sum"]), stats["fact_percent_count"]) == (Decimal("150"), 2)
+
+
+async def test_a_large_day_is_inserted_in_batches(async_test_session):
+    """A heavy day overflows asyncpg's bind-parameter cap in one insert; batches keep every row."""
+    await _clear(async_test_session, [DAY])
+    await _plan(async_test_session, DAY, source_percent="0", floor_id=FLOOR_1)
+    await _plan(async_test_session, DAY, source_percent="0", floor_id=FLOOR_2)
+    service = _service(async_test_session, cells={})
+    service._RESULT_BATCH_SIZE = 1
+    insert = AsyncMock(wraps=service.reconciliation_manager.bulk_insert)
+    service.reconciliation_manager.bulk_insert = insert
+
+    result = await service.run_reconciliation(DAY, housing_id=HOUSING)
+
+    assert result["total_results"] == 2
+    assert [len(c.args[0]) for c in insert.call_args_list] == [1, 1]
+    assert [c.kwargs["is_commit"] for c in insert.call_args_list] == [False, True]
+    rows = await managers.ReconciliationResultManager(async_test_session).search(date=DAY, housing_id=HOUSING)
+    assert {r.floor_id for r in rows} == {FLOOR_1, FLOOR_2}

@@ -4,7 +4,7 @@ Fixtures give one housing with two sections; section 1 has floors 1 and 2. The t
 sequence is written per test so each graph shape is explicit.
 """
 
-from datetime import date, datetime
+from datetime import date, datetime, time
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
@@ -26,7 +26,7 @@ WORK_B = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 CONTRACTOR = UUID("99999999-9999-9999-9999-999999999999")
 CONTRACTOR_2 = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
 
-TARGET = date(2026, 5, 20)
+TARGET = date(2030, 5, 20)
 
 
 async def _sequence(session, rows: list[dict]) -> None:
@@ -282,7 +282,7 @@ async def test_section_plan_overrides_the_housing_one(async_test_session):
 
 
 async def test_floor_limit_caps_one_contractor(async_test_session):
-    """Default limit is 4 floors of one work per contractor (Р8)."""
+    """Default limit is 4 positions per contractor in one day plan (Р8, ТЗ)."""
     await _clear_plan(async_test_session)
     await _sequence(async_test_session, [{"work_id": WORK_A, "order": 1}])
 
@@ -307,6 +307,49 @@ async def test_floor_limit_caps_one_contractor(async_test_session):
     items, _ = await service.generate_daily_plan(HOUSING, TARGET, section_id=SECTION_1)
 
     assert len(items) == 4
+
+
+async def test_limit_counts_the_contractor_not_the_work(async_test_session):
+    """The ТЗ cap is per contractor: 4 floors of «Пол» leave no room for «Стены» at the
+    same contractor — while another contractor still gets their positions."""
+    await _clear_plan(async_test_session)
+    await _sequence(
+        async_test_session,
+        [
+            {"work_id": WORK_A, "order": 1},
+            {"work_id": WORK_B, "order": 2},
+        ],
+    )
+
+    floors = managers.FloorManager(async_test_session)
+    extra_ids = []
+    for number in range(3, 5):
+        rows = await floors.search(section_id=SECTION_1, floor_number=number)
+        row = (
+            rows[0]
+            if rows
+            else await floors.create({"section_id": SECTION_1, "floor_number": number, "name": f"Этаж {number}"})
+        )
+        extra_ids.append(row.id)
+    four_floors = [FLOOR_1, FLOOR_2, *extra_ids]
+
+    cells = {CellKey(SECTION_1, f, WORK_A, CONTRACTOR): _state("0") for f in four_floors}
+    cells[CellKey(SECTION_1, FLOOR_1, WORK_B, CONTRACTOR)] = _state("0")
+    cells[CellKey(SECTION_1, FLOOR_2, WORK_B, CONTRACTOR_2)] = _state("0")
+
+    assignments = _assign(*[AssignmentKey(SECTION_1, f, WORK_A) for f in four_floors])
+    assignments[AssignmentKey(SECTION_1, FLOOR_1, WORK_B)] = [CONTRACTOR]
+    assignments[AssignmentKey(SECTION_1, FLOOR_2, WORK_B)] = [CONTRACTOR_2]
+
+    service = _service(async_test_session, cells=cells, assignments=assignments)
+
+    items, _ = await service.generate_daily_plan(HOUSING, TARGET, section_id=SECTION_1)
+
+    mine = [i for i in items if i.contractor_id == CONTRACTOR]
+    others = [i for i in items if i.contractor_id == CONTRACTOR_2]
+    assert len(mine) == 4  # 4 «Пола» съели весь лимит
+    assert all(i.work_id == WORK_A for i in mine)  # «Стены» этому подрядчику не достались
+    assert len(others) == 1  # у второго подрядчика свой счётчик
 
 
 async def test_missing_assignment_reports_the_spec_wording(async_test_session):
@@ -402,6 +445,71 @@ async def test_rerun_with_force_rebuilds_the_day(async_test_session):
     assert {i.work_id for i in items} == {WORK_A}
 
 
+async def _manual_item(session):
+    return await managers.PlanItemManager(session).create(
+        {
+            "date": TARGET,
+            "housing_id": HOUSING,
+            "section_id": SECTION_1,
+            "floor_id": FLOOR_2,
+            "work_id": WORK_B,
+            "contractor_id": CONTRACTOR,
+            "source": "manual",
+            "status": "draft",
+        }
+    )
+
+
+async def test_an_empty_chessboard_keeps_the_existing_day(async_test_session):
+    """An outage looks like «no cells»; «replace the day» must not turn it into a lost day."""
+    await _clear_plan(async_test_session)
+    await _sequence(async_test_session, [{"work_id": WORK_A, "order": 1}])
+    manual = await _manual_item(async_test_session)
+
+    service = _service(async_test_session, cells={}, assignments={})
+
+    items, reasons = await service.generate_daily_plan(HOUSING, TARGET, force=True)
+
+    assert items == []
+    assert any("оставлен без изменений" in r for r in reasons)
+    kept = await managers.PlanItemManager(async_test_session).search(housing_id=HOUSING, date=TARGET)
+    assert [i.id for i in kept] == [manual.id]
+
+
+async def test_no_calendar_plan_keeps_the_existing_day(async_test_session):
+    await _clear_plan(async_test_session)
+    await _sequence(async_test_session, [])
+    manual = await _manual_item(async_test_session)
+
+    service = _service(async_test_session, cells={}, assignments={})
+
+    items, reasons = await service.generate_daily_plan(HOUSING, TARGET, force=True)
+
+    assert items == []
+    assert any("календарный план" in r for r in reasons)
+    kept = await managers.PlanItemManager(async_test_session).search(housing_id=HOUSING, date=TARGET)
+    assert [i.id for i in kept] == [manual.id]
+
+
+async def test_a_day_with_no_ready_work_is_still_replaced(async_test_session):
+    """Raport answered — every cell is finished — so the spec's «replace the day» applies."""
+    await _clear_plan(async_test_session)
+    await _sequence(async_test_session, [{"work_id": WORK_A, "order": 1}])
+    await _manual_item(async_test_session)
+
+    service = _service(
+        async_test_session,
+        cells={CellKey(SECTION_1, FLOOR_1, WORK_A, CONTRACTOR): _state("100")},
+        assignments=_assign(AssignmentKey(SECTION_1, FLOOR_1, WORK_A)),
+    )
+
+    items, reasons = await service.generate_daily_plan(HOUSING, TARGET, force=True)
+
+    assert items == []
+    assert reasons and not any("оставлен без изменений" in r for r in reasons)
+    assert await managers.PlanItemManager(async_test_session).search(housing_id=HOUSING, date=TARGET) == []
+
+
 async def test_skipped_cells_surface_in_reasons(async_test_session):
     """An unsynced entity must be visible, not quietly thin the plan out."""
     await _clear_plan(async_test_session)
@@ -415,7 +523,216 @@ async def test_skipped_cells_surface_in_reasons(async_test_session):
     assert any("floor_not_synced=3" in r for r in reasons)
 
 
-def test_default_target_date_follows_the_cutoff():
-    """Night run targets today; a daytime run targets tomorrow (Р3)."""
-    assert default_target_date(datetime(2026, 5, 20, 3, 0)) == date(2026, 5, 20)
-    assert default_target_date(datetime(2026, 5, 20, 15, 0)) == date(2026, 5, 21)
+def test_default_target_date_follows_the_transfer_time():
+    """Night run targets today; a run past the transfer time targets tomorrow (Р3) — to the minute."""
+    at = time(10, 30)
+    assert default_target_date(at, datetime(2026, 5, 20, 3, 0)) == date(2026, 5, 20)
+    assert default_target_date(at, datetime(2026, 5, 20, 10, 29)) == date(2026, 5, 20)
+    assert default_target_date(at, datetime(2026, 5, 20, 10, 30)) == date(2026, 5, 21)
+    assert default_target_date(at, datetime(2026, 5, 20, 15, 0)) == date(2026, 5, 21)
+
+
+async def test_work_without_a_cell_is_not_planned_there(async_test_session):
+    """DEV-6858 item 9: a КП covering one section must not spill onto the others.
+
+    A root work (no predecessors) used to be «ready» on every section and floor,
+    including cells Raport does not have at all — the positions were undeliverable.
+    """
+    await _clear_plan(async_test_session)
+    await _sequence(async_test_session, [{"work_id": WORK_A, "order": 1}])
+
+    service = _service(
+        async_test_session,
+        # The chessboard knows the work only on section 1, floor 1.
+        cells={CellKey(SECTION_1, FLOOR_1, WORK_A, CONTRACTOR): _state("0")},
+        assignments=_assign(
+            AssignmentKey(SECTION_1, FLOOR_1, WORK_A),
+            AssignmentKey(SECTION_1, FLOOR_2, WORK_A),
+            AssignmentKey(SECTION_2, FLOOR_1, WORK_A),
+        ),
+    )
+
+    items, reasons = await service.generate_daily_plan(HOUSING, TARGET)
+
+    assert reasons == []
+    assert {(i.section_id, i.floor_id) for i in items} == {(SECTION_1, FLOOR_1)}
+
+
+async def test_partial_generation_still_reports_missing_contractors(async_test_session):
+    """DEV-6858 item 13: a skipped position must be explained even when others made it."""
+    await _clear_plan(async_test_session)
+    await _sequence(async_test_session, [{"work_id": WORK_A, "order": 1}])
+
+    service = _service(
+        async_test_session,
+        cells={
+            CellKey(SECTION_1, FLOOR_1, WORK_A, CONTRACTOR): _state("0"),
+            CellKey(SECTION_1, FLOOR_2, WORK_A, CONTRACTOR): _state("0"),
+        },
+        # Floor 2 has the cell but nobody assigned.
+        assignments=_assign(AssignmentKey(SECTION_1, FLOOR_1, WORK_A)),
+    )
+
+    items, reasons = await service.generate_daily_plan(HOUSING, TARGET)
+
+    assert {(i.floor_id) for i in items} == {FLOOR_1}
+    assert any("Не назначен подрядчик" in r for r in reasons)
+
+
+async def test_housing_level_predecessor_gates_floor_works(async_test_session):
+    """The Gantt gives works different floor sets: the foundation slab lives on the «-»
+    pseudo-floor only, its successors on real floors. The dependency is checked at the
+    nearest scope where the predecessor exists — done there unlocks every floor."""
+    await _clear_plan(async_test_session)
+    await _sequence(
+        async_test_session,
+        [
+            {"work_id": WORK_A, "order": 1},
+            {"work_id": WORK_B, "order": 2, "depends_on": [WORK_A]},
+        ],
+    )
+
+    # WORK_A (foundation) exists only on section 2 — nowhere near WORK_B's floors.
+    cells = {
+        CellKey(SECTION_2, FLOOR_1, WORK_A, CONTRACTOR): _state("100"),
+        CellKey(SECTION_1, FLOOR_1, WORK_B, CONTRACTOR): _state("0"),
+        CellKey(SECTION_1, FLOOR_2, WORK_B, CONTRACTOR): _state("0"),
+    }
+    service = _service(
+        async_test_session,
+        cells=cells,
+        assignments=_assign(
+            AssignmentKey(SECTION_1, FLOOR_1, WORK_B),
+            AssignmentKey(SECTION_1, FLOOR_2, WORK_B),
+        ),
+    )
+
+    items, reasons = await service.generate_daily_plan(HOUSING, TARGET)
+
+    assert reasons == []
+    assert {(i.floor_id, i.work_id) for i in items} == {(FLOOR_1, WORK_B), (FLOOR_2, WORK_B)}
+
+
+async def test_housing_level_predecessor_still_blocks_until_done(async_test_session):
+    """The cascade must not weaken the gate: an unfinished housing-level predecessor
+    keeps every floor of the successor closed."""
+    await _clear_plan(async_test_session)
+    await _sequence(
+        async_test_session,
+        [
+            {"work_id": WORK_A, "order": 1},
+            {"work_id": WORK_B, "order": 2, "depends_on": [WORK_A]},
+        ],
+    )
+
+    cells = {
+        CellKey(SECTION_2, FLOOR_1, WORK_A, CONTRACTOR): _state("60"),
+        CellKey(SECTION_1, FLOOR_1, WORK_B, CONTRACTOR): _state("0"),
+    }
+    service = _service(
+        async_test_session,
+        cells=cells,
+        assignments=_assign(
+            AssignmentKey(SECTION_2, FLOOR_1, WORK_A),
+            AssignmentKey(SECTION_1, FLOOR_1, WORK_B),
+        ),
+    )
+
+    items, _ = await service.generate_daily_plan(HOUSING, TARGET)
+
+    # Section 2 has no floors in the fixtures, so WORK_A itself cannot be planned —
+    # the point here is that WORK_B stays closed while its predecessor is at 60%.
+    assert WORK_B not in {i.work_id for i in items}
+    assert items == []
+
+
+async def test_same_cell_rule_still_wins_when_the_predecessor_has_the_cell(async_test_session):
+    """Where the predecessor does have a cell on the floor, the strict per-floor rule
+    applies: done on another floor of the section does not unlock this one."""
+    await _clear_plan(async_test_session)
+    await _sequence(
+        async_test_session,
+        [
+            {"work_id": WORK_A, "order": 1},
+            {"work_id": WORK_B, "order": 2, "depends_on": [WORK_A]},
+        ],
+    )
+
+    cells = {
+        CellKey(SECTION_1, FLOOR_1, WORK_A, CONTRACTOR): _state("100"),
+        CellKey(SECTION_1, FLOOR_2, WORK_A, CONTRACTOR): _state("40"),
+        CellKey(SECTION_1, FLOOR_1, WORK_B, CONTRACTOR): _state("0"),
+        CellKey(SECTION_1, FLOOR_2, WORK_B, CONTRACTOR): _state("0"),
+    }
+    service = _service(
+        async_test_session,
+        cells=cells,
+        assignments=_assign(
+            AssignmentKey(SECTION_1, FLOOR_2, WORK_A),
+            AssignmentKey(SECTION_1, FLOOR_1, WORK_B),
+            AssignmentKey(SECTION_1, FLOOR_2, WORK_B),
+        ),
+    )
+
+    items, _ = await service.generate_daily_plan(HOUSING, TARGET)
+
+    planned = {(i.floor_id, i.work_id) for i in items}
+    assert (FLOOR_1, WORK_B) in planned  # предшественник на эт.1 закрыт
+    assert (FLOOR_2, WORK_B) not in planned  # на эт.2 — нет, чужой этаж не открывает
+    assert (FLOOR_2, WORK_A) in planned  # сам предшественник доделывает эт.2
+
+
+async def test_start_start_predecessor_cascades_too(async_test_session):
+    """SS-links follow the same cascade: progress at the nearest scope unlocks."""
+    await _clear_plan(async_test_session)
+    await _sequence(
+        async_test_session,
+        [
+            {"work_id": WORK_A, "order": 1},
+            {"work_id": WORK_B, "order": 2, "depends_on_ss": [WORK_A]},
+        ],
+    )
+
+    cells = {
+        CellKey(SECTION_2, FLOOR_1, WORK_A, CONTRACTOR): _state("30"),
+        CellKey(SECTION_1, FLOOR_1, WORK_B, CONTRACTOR): _state("0"),
+    }
+    service = _service(
+        async_test_session,
+        cells=cells,
+        assignments=_assign(
+            AssignmentKey(SECTION_2, FLOOR_1, WORK_A),
+            AssignmentKey(SECTION_1, FLOOR_1, WORK_B),
+        ),
+    )
+
+    items, _ = await service.generate_daily_plan(HOUSING, TARGET)
+
+    assert (SECTION_1, FLOOR_1, WORK_B) in {(i.section_id, i.floor_id, i.work_id) for i in items}
+
+
+async def test_contractor_own_limit_row_overrides_the_default(async_test_session):
+    """A row in contractor_position_limits caps that contractor tighter than the default."""
+    await _clear_plan(async_test_session)
+    await _sequence(async_test_session, [{"work_id": WORK_A, "order": 1}])
+
+    limits = managers.ContractorPositionLimitManager(async_test_session)
+    for existing in await limits.search(contractor_id=CONTRACTOR):
+        await limits.delete_by_id(existing.id)
+    await limits.create({"contractor_id": CONTRACTOR, "positions_limit": 1})
+
+    service = _service(
+        async_test_session,
+        cells={
+            CellKey(SECTION_1, FLOOR_1, WORK_A, CONTRACTOR): _state("0"),
+            CellKey(SECTION_1, FLOOR_2, WORK_A, CONTRACTOR): _state("0"),
+        },
+        assignments=_assign(
+            AssignmentKey(SECTION_1, FLOOR_1, WORK_A),
+            AssignmentKey(SECTION_1, FLOOR_2, WORK_A),
+        ),
+    )
+
+    items, _ = await service.generate_daily_plan(HOUSING, TARGET, section_id=SECTION_1)
+
+    assert len(items) == 1

@@ -4,6 +4,8 @@ from sqladmin import BaseView, expose
 from starlette.responses import HTMLResponse, RedirectResponse
 
 from src.config.admin.categories import CATEGORY_SYNC
+from src.config.admin.auth import admin_access_scope
+from src.services.access.schemes import SCOPE_KEY
 from src.config.logger import LoggerProvider
 from src.config.postgres.db_config import get_async_session
 from src.services.sync.service import SyncReportService
@@ -19,6 +21,7 @@ def _redirect_back(request: Request) -> RedirectResponse:
 async def _run(request: Request, label: str, action):
     try:
         async with get_async_session() as db:
+            db.info[SCOPE_KEY] = admin_access_scope(request)
             service = SyncReportService(db)
             counts = await action(service)
         log.info(f"Sync {label} completed: {counts}")

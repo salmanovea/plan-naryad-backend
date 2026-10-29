@@ -28,6 +28,9 @@ class DashboardOverviewSchema(BaseModel):
 
 class DashboardFilters(HousingBaseFilters):
     section_id: Optional[UUID] = Query(None, description="Optional section filter within the housing")
+    contractor_id: Optional[UUID] = Query(
+        None, description="«Подрядчик» selector; forced to own companies for external users"
+    )
     date_from: Optional[date] = Query(None, description="Period start (default: today-7d)")
     date_to: Optional[date] = Query(None, description="Period end (default: today)")
 
@@ -45,5 +48,8 @@ class DashboardSectionSchema(BaseModel):
 
 class DashboardSectionsFilters(BaseModel):
     housing_id: UUID = Query(..., description="Housing to break down by section")
+    contractor_id: Optional[UUID] = Query(
+        None, description="«Подрядчик» selector; forced to own companies for external users"
+    )
     date_from: Optional[date] = Query(None, description="Period start (default: today-7d)")
     date_to: Optional[date] = Query(None, description="Period end (default: today)")

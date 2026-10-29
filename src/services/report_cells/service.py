@@ -25,7 +25,7 @@ from src.config.postgres.db_config import get_session
 from src.external.report.api import ReportApi, ReportApiError
 from src.models import managers
 from src.models.managers.common import BaseManager
-from src.services.common import BaseService
+from src.services.common import BaseService, end_transaction
 
 log = LoggerProvider().get_logger(__name__)
 
@@ -67,6 +67,11 @@ class HousingSlice:
     # Plan generation asks «is this cell finished» inside nested loops, and a housing holds
     # tens of thousands of cells — scanning them each time would dominate the run.
     _by_cell: Optional[dict[tuple[UUID, UUID, UUID], list[CellState]]] = None
+    # Coarser scopes for the predecessor cascade: works have different floor sets in the
+    # Gantt (a foundation lives on «-» only, floor works on 1..N), so a dependency is
+    # checked at the nearest scope where the predecessor exists at all.
+    _by_section_work: Optional[dict[tuple[UUID, UUID], list[CellState]]] = None
+    _by_work: Optional[dict[UUID, list[CellState]]] = None
 
     def states_on(self, section_id: UUID, floor_id: UUID, work_id: UUID) -> list[CellState]:
         """Every contractor's state on one cell."""
@@ -76,6 +81,24 @@ class HousingSlice:
                 index.setdefault((key.section_id, key.floor_id, key.work_id), []).append(state)
             self._by_cell = index
         return self._by_cell.get((section_id, floor_id, work_id), [])
+
+    def states_in_section(self, section_id: UUID, work_id: UUID) -> list[CellState]:
+        """A work's states across every floor of one section."""
+        if self._by_section_work is None:
+            index: dict[tuple[UUID, UUID], list[CellState]] = {}
+            for key, state in self.cells.items():
+                index.setdefault((key.section_id, key.work_id), []).append(state)
+            self._by_section_work = index
+        return self._by_section_work.get((section_id, work_id), [])
+
+    def states_of_work(self, work_id: UUID) -> list[CellState]:
+        """A work's states across the whole housing («Весь корпус» pseudo-section included)."""
+        if self._by_work is None:
+            index: dict[UUID, list[CellState]] = {}
+            for key, state in self.cells.items():
+                index.setdefault(key.work_id, []).append(state)
+            self._by_work = index
+        return self._by_work.get(work_id, [])
 
     def percent_for(self, key: CellKey) -> Optional[Decimal]:
         state = self.cells.get(key)
@@ -149,8 +172,7 @@ class ReportCellsService(BaseService):
         section_map = await self._reverse_map(self.section_manager, housing_id=housing_id)
         floor_map = await self._floor_map(housing_id)
 
-        # Fetch first, resolve contractors second: there are ~48k contractors in total but
-        # only a handful appear on one housing, so the map is built from what was seen.
+        await end_transaction(self.db)
         rows_by_work: dict[str, list[dict]] = {}
         seen_contractors: set[str] = set()
         for work_raport_id in works:

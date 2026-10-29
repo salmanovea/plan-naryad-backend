@@ -1,5 +1,5 @@
 from datetime import date as date_type
-from datetime import date
+from datetime import date, time
 from decimal import Decimal
 from typing import List, Optional
 from uuid import UUID
@@ -79,6 +79,8 @@ class DailyPlanResponse(BaseModel):
     housing_name: Optional[str] = None
     total_items: int = 0
     items: List[PlanItemSchema] = []
+    transfer_time: Optional[time] = Field(None, description="When the day goes to the contractors, business time")
+    is_closed: bool = Field(False, description="The transfer time has passed: the day can no longer be changed")
 
 
 class ContractorPlanResponse(BaseModel):
@@ -101,7 +103,7 @@ class RSStatsResponse(BaseModel):
 
 
 class TransferPlanRequest(BaseModel):
-    """Hand a day over to the contractors — normally called by the scheduler at the cutoff."""
+    """Hand one day over to the contractors now — an operator's tool; the scheduler uses `/tasks/transfer`."""
 
     date: date_type
     housing_id: Optional[UUID] = None
